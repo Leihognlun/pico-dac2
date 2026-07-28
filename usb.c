@@ -76,7 +76,7 @@ static void usb_setup_endpoints();
 void usb_device_init() {
   // USB コントローラーをリセット
   reset_unreset_block_num_wait_blocking(RESET_USBCTRL);
-  memset(usb_dpram, 0, sizeof(usb_dpram));
+  memset(usb_dpram, 0, sizeof(*usb_dpram));
 
   // USB 割り込みハンドラを設定
   irq_set_exclusive_handler(USBCTRL_IRQ, isr_usbctrl_handler);
