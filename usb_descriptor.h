@@ -284,8 +284,8 @@ struct configuration_descriptor {
                             .bDescriptorSubtype = 0x01,  // EP_GENERAL
                             .bmAttributes = 0,           // Non Max Packet Only
                             .bmControls = 0x00,          // None
-                            .bLockDelayUnits = 1,        // ms
-                            .wLockDelay = 1,             // TODO 0?
+                            .bLockDelayUnits = 0,
+                            .wLockDelay = 0,
                         },
                     .as_isochronous_feedback_endpoint =
                         {
@@ -366,8 +366,8 @@ struct configuration_descriptor {
                             .bDescriptorSubtype = 0x01,  // EP_GENERAL
                             .bmAttributes = 0,           // Non Max Packet Only
                             .bmControls = 0x00,          // None
-                            .bLockDelayUnits = 1,        // ms
-                            .wLockDelay = 1,             // TODO 0?
+                            .bLockDelayUnits = 0,
+                            .wLockDelay = 0,
                         },
                     .as_isochronous_feedback_endpoint =
                         {
@@ -448,8 +448,8 @@ struct configuration_descriptor {
                             .bDescriptorSubtype = 0x01,  // EP_GENERAL
                             .bmAttributes = 0,           // Non Max Packet Only
                             .bmControls = 0x00,          // None
-                            .bLockDelayUnits = 1,        // ms
-                            .wLockDelay = 1,             // TODO 0?
+                            .bLockDelayUnits = 0,
+                            .wLockDelay = 0,
                         },
                     .as_isochronous_feedback_endpoint =
                         {
