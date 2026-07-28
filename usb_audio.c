@@ -141,7 +141,22 @@ bool usb_audio_control_in_request(const struct usb_setup_packet_t* pkt) {
   }
 
   if (pkt->bRequest == UAC2_CS_REQ_CUR) {
-    if ((pkt->wIndex >> 8) == AUDIO_CONTROL_ID_FEATURE_UNIT &&
+    if ((pkt->wIndex >> 8) == AUDIO_CONTROL_ID_CLOCK &&
+        (pkt->wValue >> 8) == UAC2_CS_SAM_FREQ_CONTROL &&
+        (pkt->wValue & 0xFF) == 0) {
+      // GET CUR (Sampling Frequency)
+      static uint8_t response[4];
+      const uint32_t freq = audio_device_get_sampling_freq();
+
+      response[0] = (uint8_t)freq;
+      response[1] = (uint8_t)(freq >> 8);
+      response[2] = (uint8_t)(freq >> 16);
+      response[3] = (uint8_t)(freq >> 24);
+
+      usb_ep0_start_transfer(response,
+                             MIN(pkt->wLength, sizeof(response)));
+      return true;
+    } else if ((pkt->wIndex >> 8) == AUDIO_CONTROL_ID_FEATURE_UNIT &&
         (pkt->wValue >> 8) == UAC2_FU_VOLUME_CONTROL) {
       // GET Cur (Volume)
       static int16_t vol;
