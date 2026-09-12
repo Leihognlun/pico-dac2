@@ -1,0 +1,20 @@
+; 32-bit stereo I2S, four cycles per bit = 256 cycles per frame.
+; Use exactly the SPDIF divider and synchronize both SMs at startup.
+.program i2s_mirror
+.side_set 2
+.wrap_target
+    nop             side 0b01 [1]
+    out pins, 1     side 0b00 [1]
+    set x, 29       side 0b01 [1]
+left_bits:
+    out pins, 1     side 0b00 [1]
+    jmp x--, left_bits side 0b01 [1]
+    out pins, 1     side 0b10 [1]
+    nop             side 0b11 [1]
+    out pins, 1     side 0b10 [1]
+    set x, 29       side 0b11 [1]
+right_bits:
+    out pins, 1     side 0b10 [1]
+    jmp x--, right_bits side 0b11 [1]
+    out pins, 1     side 0b00 [1]
+.wrap

@@ -3,6 +3,7 @@ import argparse
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 
 def main():
@@ -12,8 +13,12 @@ def main():
     root = Path(__file__).resolve().parents[1]
     build = root / "build" / "host-tests"
     build.mkdir(parents=True, exist_ok=True)
+    subprocess.run([sys.executable, str(root / "tests/i2s_pio_test.py")], check=True)
     common = [args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", str(root)]
     cases = [
+        ("usb_buffer_control", ["-I", str(root / "tests/stubs")],
+         ["tests/usb_buffer_control_test.c"]),
+        ("dual_output", [], ["spdif_encode.c", "tests/dual_output_test.c"]),
         ("spdif_encode", [], ["spdif_encode.c", "tests/spdif_encode_test.c"]),
         ("descriptors_spdif", ["-DPICODAC_OUTPUT_SPDIF=1", "-DHID_ENABLE=1"],
          ["tests/usb_descriptors_test.c"]),

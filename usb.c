@@ -9,6 +9,7 @@
 #include "log.h"
 #include "pico/util/queue.h"
 #include "usb_common.h"
+#include "usb_buffer_control.h"
 // TODO 外部から設定できるよう修正
 #include "usb_descriptor.h"
 
@@ -603,7 +604,7 @@ static void usb_start_transfer(struct endpoint_config* ep, bool in,
   ep->next_pid ^= 0x01;
 
   // 転送開始
-  *ep->buf_ctrl = val;
+  usb_buffer_control_publish(ep->buf_ctrl, val);
 }
 
 void usb_ep_n_start_transfer(uint8_t ep_num, bool in, const uint8_t* buf,
@@ -786,7 +787,8 @@ static void usb_setup_endpoints() {
   ep_out[0].buf_ctrl = &usb_dpram->ep_buf_ctrl[0].out;
   ep_out[0].next_pid = 1;
   ep_out[0].max_packet_size = 64;
-  *ep_out[0].buf_ctrl = USB_BUF_CTRL_AVAIL | USB_BUF_CTRL_DATA1_PID | 64;
+  usb_buffer_control_publish(ep_out[0].buf_ctrl,
+                             USB_BUF_CTRL_AVAIL | USB_BUF_CTRL_DATA1_PID | 64);
 }
 
 static void usb_device_enable_endpoint(uint8_t ep_num, bool in,
@@ -817,7 +819,8 @@ static void usb_device_enable_endpoint(uint8_t ep_num, bool in,
          << EP_CTRL_BUFFER_TYPE_LSB;
   *(in ? &usb_dpram->ep_ctrl[ep_num - 1].in
        : &usb_dpram->ep_ctrl[ep_num - 1].out) = reg;
-  *ep->buf_ctrl = max_packet_size | USB_BUF_CTRL_AVAIL | USB_BUF_CTRL_DATA0_PID;
+  usb_buffer_control_publish(ep->buf_ctrl,
+      max_packet_size | USB_BUF_CTRL_AVAIL | USB_BUF_CTRL_DATA0_PID);
 }
 
 void usb_device_disable_endpoint(uint8_t ep_num, bool in,

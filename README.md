@@ -6,9 +6,12 @@ This project provides firmware to enable the Raspberry Pi Pico as a USB DAC (Dig
 
 ## Features
 
-- **SPDIF output (default):** GPIO 22, stereo 44.1/48/88.2/96 kHz,
+- **Synchronized I2S + SPDIF output (default):** SPDIF GPIO 22;
+  I2S DATA=18, BCLK=16, LRCLK=17. PCM plays on both outputs; AC-3/DTS
+  plays only on SPDIF while I2S sends zeros with its clocks running.
+  Stereo 44.1/48/88.2/96 kHz,
   16/24-bit output; 32-bit USB samples are truncated to their upper 24 bits.
-  Select `PICODAC_OUTPUT=I2S` to build the original I2S output instead.
+  Select `PICODAC_OUTPUT=BOTH`, `SPDIF`, or `I2S` at build time.
   See [SPDIF setup and validation (中文)](SPDIF.md).
 - **Dolby Digital / DTS passthrough:** The SPDIF build exposes UAC2 Type III
   AC-3 and DTS-I/II/III formats. Already-packed IEC 61937 data bypasses software
@@ -56,7 +59,7 @@ Build the firmware using standard CMake build procedures.
 ```bash
 mkdir build
 cd build
-cmake .. -DPICODAC_OUTPUT=SPDIF -DPICODAC_SPDIF_PIN=22
+cmake .. -DPICODAC_OUTPUT=BOTH -DPICODAC_SPDIF_PIN=22
 cmake --build .
 ```
 
@@ -89,7 +92,7 @@ set (PICODAC_I2S_BASE_CLOCK_PIN 16 CACHE STRING "I2S Base Clock Pin. LRCLK is BA
 
 1. Connect the SPDIF transmitter to GPIO 22 and GND as described in
    [SPDIF.md](SPDIF.md), or connect your I2S DAC when building with
-   `-DPICODAC_OUTPUT=I2S`. Outputs are selected at build time, not simultaneous.
+   `-DPICODAC_OUTPUT=I2S`. The default `BOTH` build can drive both devices.
 2. Connect the Pico with the flashed firmware to a host (e.g., PC) via USB.
 3. The host OS will automatically recognize a new audio output device named `mdac_adc2` (or similar).
 4. Select this device as the output in your OS sound settings and play music or other audio.

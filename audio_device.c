@@ -27,6 +27,9 @@ enum {
 };
 
 // --- Module-level Static Variables ---
+// Cumulative debugger-visible counters; never print in the audio hot path.
+volatile uint32_t audio_underrun_count;
+volatile uint32_t audio_dropped_frames;
 static ringbuffer_t rb;
 static app_state_t g_current_state;
 static audio_output_config_t audio_output_config;
@@ -158,6 +161,7 @@ void audio_device_task(void) {
             ringbuffer_fill_ratio(&rb);
         if (buffer_level <= UNDERRUN_WATER_LEVEL ||
             ringbuffer_count(&rb) < bytes_to_read) {
+          ++audio_underrun_count;
           // Underrun: change state to STALLED
           LOG_DEBUG("Underrun! Ratio: %.2f. Entering STALLED state.",
                     buffer_level);
@@ -234,6 +238,7 @@ void audio_device_on_usb_rx(const int32_t *buffer, uint32_t num_samples) {
   uint32_t bytes = num_samples * sizeof(int32_t);
   size_t written = ringbuffer_write(&rb, (void *)buffer, bytes);
   if (written != bytes) {
+    audio_dropped_frames += (bytes - written) / (2 * sizeof(int32_t));
     // TODO
     // リングバッファに書き込めない場合、本来は再生に追いつくために
     // リングバッファの古いデータを捨てるのが望ましい

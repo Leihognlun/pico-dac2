@@ -1,10 +1,13 @@
 # SPDIF 输出
 
-工程默认构建 SPDIF 输出，原有 I2S 可通过 CMake 选项切换。两个输出模式不同时运行。
+工程默认构建 **I2S + SPDIF 双输出**（`PICODAC_OUTPUT=BOTH`）。
+PCM 同时输出；AC-3/DTS 透传只送到 SPDIF，I2S 保持时钟并发送零样本。
+也可选择 `SPDIF` 或 `I2S` 单输出模式。
 
 ## 接线与构建
 
 - 默认信号：**GPIO 22**（标准 Pico 的物理引脚 29）。
+- I2S：DATA=GPIO 18，BCLK=GPIO 16，LRCLK=GPIO 17，接 PCM5102A 等 I2S DAC。
 - 地：Pico GND 与发射模块 GND 共地。
 - GPIO 输出为 3.3 V 数字逻辑信号，可接输入兼容 3.3 V 的光纤发射模块。
   发射模块供电按其规格连接。
@@ -16,7 +19,7 @@
 在工程目录执行：
 
 ```powershell
-cmake -S . -B build -DPICODAC_OUTPUT=SPDIF -DPICODAC_SPDIF_PIN=22
+cmake -S . -B build -DPICODAC_OUTPUT=BOTH -DPICODAC_SPDIF_PIN=22
 cmake --build build -j 4
 ```
 
@@ -31,6 +34,23 @@ cmake --build build -j 4
 ```
 
 I2S 默认 DATA=18、BCLK=16、LRCLK=17。选项会保存在 CMake 缓存中，切换后需重新编译。
+只需 SPDIF 时设置 `-DPICODAC_OUTPUT=SPDIF`。双输出模式会检查两种接口的引脚是否冲突。
+
+## 双输出同步
+
+两路共用 USB 环形缓冲区中的同一份音频，音量和静音只处理一次。
+SPDIF 编码前的 PCM 同时转换为 I2S 数据；不会把 SPDIF 的 BMC 编码波形直接送入 I2S。
+双输出的 I2S 固定为每声道 32 位时隙（BCLK = 64 × LRCLK），16/24 位有效数据左对齐。
+32 位 USB 输入在两路均保留高 24 位，让两路有效样本保持一致。
+单独的 I2S 模式仍沿用原有 16/24/32 位时隙实现。
+
+`i2s_mirror.pio` 和 SPDIF PIO 都使用每帧 256 个周期、完全相同的分频值，
+并在 PIO0 上同步启动。两路 DMA 共用 192 帧块调度：先完成的一路选择下一块，
+后完成的一路使用同一块；两路都读完旧块后才释放其存储空间。无新块时两路一起选用零填充。
+这样不需要分别消费 USB 数据，也没有两套独立分频器取整造成的累计采样率漂移。
+
+这里的同步指相同帧顺序和输出速率。SPDIF/I2S 协议边沿不同，外接功放和 DAC
+还各有处理延迟，因此不能保证最终模拟声音严格同相；实际引脚波形和长期播放仍需硬件验证。
 
 ## 音频行为
 
@@ -45,18 +65,36 @@ PCM 均支持双声道 44.1、48、88.2、96 kHz。沿用 USB 音量、主/左�
 
 `spdif_encode.c` 生成完整的 192 帧块，包含 B/M/W 前导码、有效性位、声道状态及偶校验。
 声道状态随输入格式更新 PCM/Non-PCM、采样率和有效位数。
-`spdif.c` 使用 PIO0 的一个动态分配状态机、一个 DMA 通道和 DMA IRQ1。
+`spdif.c` 的单输出模式使用 PIO0 的一个状态机和一个 DMA 通道；
+双输出模式使用 PIO0 的两个状态机和两个 DMA 通道，共用 DMA IRQ1，LED 仍使用 PIO1。
 编码完成的缓冲区才交给 DMA；没有新块时发送完整静音块，保持块边界。
 停止 USB 音频接口后关闭输出，GPIO 拉低；静止状态不维持接收器锁定。
 
-每帧使用 256 个 PIO 时钟周期。保持工程现有的 92.16 MHz 系统时钟，按
-PIO 的 8 位小数分频器就近取整；44.1/88.2 kHz 的平均频率存在约 -98 ppm
-的量化误差。48/96 kHz 的平均分频比可精确表示。实际抖动、晶振误差和接收器
-锁定情况仍需在硬件上测量。
+The system clock is now 132 MHz (1584 MHz PLL VCO / 6 / 2), within the SDK PLL limits.
+Both PIO serializers use 256 cycles/frame and the same rounded fractional divider.
+Average rate error is about +100 ppm at 44.1/88.2 kHz; 48/96 kHz are exact on average.
+Fractional-divider jitter and receiver compatibility still require hardware validation.
+
+Periodic distortion diagnostics (cumulative debugger counters, reset on reboot):
+- `audio_underrun_count`: input starvation recovery events.
+- `audio_dropped_frames`: stereo frames discarded on input buffer overflow.
+- `spdif_silence_block_count`: DMA blocks without a prepared audio block.
+- `spdif_tx_stall_count` / `i2s_tx_stall_count`: DMA intervals with a PIO TX stall.
+
+No diagnostic printing is added to the audio hot path. Compare counter changes during
+an audible fault. The clock correction has not yet been verified on hardware to fix
+the reported 12-13 second recurrence. Record rate, depth, DAC model and whether SPDIF
+is affected at the same time.
+
+USB 缓冲提交已按 RP2040 并发访问要求改为两步：先写长度、PID 和 FULL，
+等待至少 12 个系统时钟周期，再置 AVAILABLE。适用于音频、反馈及控制端点。
+参考 [TinyUSB 的 RP2040 驱动](https://github.com/hathach/tinyusb/blob/master/src/portable/raspberrypi/rp2040/rp2040_usb.c)
+中的缓冲控制寄存器写入顺序。新增主机测试检查提交前的寄存器状态；
+该测试不能模拟芯片时钟域竞争，周期性噪音是否消失仍需烧录后连续播放验证。
 
 ## Dolby Digital / DTS 透传
 
-SPDIF 构建增加了 USB Audio Class 2.0 **Type III / IEC 61937** 格式，
+SPDIF 和 BOTH 构建提供 USB Audio Class 2.0 **Type III / IEC 61937** 格式，
 用于将已编码的 Dolby Digital（AC-3）或 DTS Core 音轨送到支持对应格式的功放。
 这不是 AC-3/DTS 编码器或解码器，不会把游戏或系统的多声道 PCM 实时编码成 5.1。
 不声明 Dolby Digital Plus（E-AC-3）、TrueHD、DTS-HD、Atmos 支持。
@@ -73,6 +111,7 @@ SPDIF 构建增加了 USB Audio Class 2.0 **Type III / IEC 61937** 格式，
 固件不对裸 `.ac3` / `.dts` 文件进行封装，也不在 PCM alternate setting 中自动检测压缩数据。
 载波时钟沿用上述四档；播放时必须匹配音轨和接收器支持的速率，常见为 48 kHz。
 I2S 构建仅保留 PCM alternate settings，不提供压缩透传。
+在 BOTH 模式下选择 AC-3/DTS 时，I2S 整块输出零样本，绝不发送压缩载波；切回 PCM 后自动恢复双输出。
 
 透传模式会完整跳过软件音量及主/左右声道静音；这些控制值继续保留，切回 PCM 后生效。
 **请在功放上调节音量和静音。** 不要对压缩载波使用播放器音量、均衡器、混音或重采样。
@@ -106,6 +145,8 @@ python tests/run_tests.py
 
 覆盖四种采样率 × 三种 PCM 输入位深、PCM/Non-PCM 零填充、前导码、音频位序、
 有效性、偶校验和完整声道状态块，并检查 SPDIF/I2S 两套 USB 描述符。
+另外检查 I2S PIO 源码的周期数、MSB 位序和 LRCLK 延迟，比较 I2S 数据与 SPDIF
+解码后的有效样本，并测试双 DMA 的块配对、存储占用和缺数据行为。
 透传集成测试使用真实的 USB 音频处理、环形缓冲区和 SPDIF 编码代码，仅替换硬件接口：
 输入跨包、跨块的合成 AC-3/DTS IEC 61937 突发，验证四种格式 × 四种载波时钟的逐位一致性、
 音量/静音旁路、缺数据及 PCM/透传/采样率切换。合成载荷不是可供功放解码的真实音轨。
@@ -118,6 +159,8 @@ python tests/run_tests.py
 4. 用逻辑分析仪验证 192 帧块、输出采样率及播放中断供数据时的静音块。
 5. 分别播放真实 AC-3 和 DTS Core 5.1 声道测试音轨，确认功放格式显示和声道映射；
    重复暂停/恢复和 PCM/压缩音轨切换。
+6. BOTH 模式下同时观察两路输出，长时间播放 44.1/88.2 kHz PCM，确认没有累计漂移；
+   AC-3/DTS 播放时检查 I2S DATA 为零、时钟保持，切回 PCM 后两路恢复。
 
 软件测试和编译不能代替实际的接收器锁定、电气和听音验证。
 

@@ -10,11 +10,9 @@
 #include "usb_hid.h"
 
 int main() {
-  // CPU 周波数が標準の 125 MHz だと PIO のクロック分周に誤差が出る
-  // そのため 48kHz/96kHz で都合が良いように 126 MHz を設定
-  // set_sys_clock_khz(126000, true);
-  // 92.16MHz だと整数分周になる
-  set_sys_clock_pll(12 * MHZ * 192u, 5, 5);
+  // 1584 MHz VCO / 6 / 2 = 132 MHz, within the RP2040 PLL limits.
+  // The audio PIO backends derive their dividers from clk_sys.
+  set_sys_clock_pll(1584 * MHZ, 6, 2);
 
   stdio_init_all();
 
