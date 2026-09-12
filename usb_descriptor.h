@@ -42,12 +42,53 @@ static const struct usb_device_descriptor device_descriptor = {
     .bMaxPacketSize0 = 64,    // Max packet size for ep0
     .idVendor = VENDOR_ID,    // Your vendor id
     .idProduct = PRODUCT_ID,  // Your product ID
-    .bcdDevice = 0,           // No device revision number
+    .bcdDevice = 0x0101,      // Revised audio format descriptors
     .iManufacturer = 0,       // Manufacturer string index
     .iProduct = 0,            // Product string index
     .iSerialNumber = 0,       // No serial number
     .bNumConfigurations = 1   // One configuration
 };
+
+#if PICODAC_OUTPUT_SPDIF
+// Type III uses the same six-byte format layout as Type I, with a
+// different bFormatType. Each alternate setting declares one codec.
+#define USB_IEC61937_ALT(alt, formats) { \
+    .as_interface = { \
+        .bLength = sizeof(usb_standard_as_interface_descriptor), \
+        .bDescriptorType = USB_DT_INTERFACE, \
+        .bInterfaceNumber = INTERFACE_AUDIO_STREAM, \
+        .bAlternateSetting = (alt), .bNumEndpoint = 2, \
+        .bInterfaceClass = 1, .bInterfaceSubClass = 2, \
+        .bInterfaceProtocol = 0x20, \
+    }, \
+    .cs_as_interface = { \
+        .bLength = sizeof(struct usb_class_specific_as_interface_descriptor), \
+        .bDescriptorType = USB_DT_CS_INTERFACE, .bDescriptorSubtype = 1, \
+        .bTerminalLink = AUDIO_CONTROL_ID_INPUT, .bFormatType = 3, \
+        .bmFormats = (formats), .bNrChannels = 2, .bmChannelConfig = 3, \
+    }, \
+    .cs_as_format_type = { \
+        .bLength = sizeof(struct usb_class_specific_as_type_i_format_descriptor), \
+        .bDescriptorType = USB_DT_CS_INTERFACE, .bDescriptorSubtype = 2, \
+        .bFormatType = 3, .bSubslotSize = 2, .bBitResolution = 16, \
+    }, \
+    .as_audio_data_endpoint = { \
+        .bLength = sizeof(struct usb_standard_as_isochronous_audio_data_endpoint_descriptor), \
+        .bDescriptorType = USB_DT_ENDPOINT, .bEndpointAddress = EP_AUDIO_STREAM_OUT, \
+        .bmAttributes = 0x05, .wMaxPacketSize = AUDIO_IEC61937_MAX_PACKET_SIZE, \
+        .bInterval = 1, \
+    }, \
+    .cs_as_audio_data_endpoint = { \
+        .bLength = sizeof(struct usb_class_specific_as_isochronous_audio_data_endpoint_descriptor), \
+        .bDescriptorType = USB_DT_CS_ENDPOINT, .bDescriptorSubtype = 1, \
+    }, \
+    .as_isochronous_feedback_endpoint = { \
+        .bLength = sizeof(struct usb_standard_as_isochronous_feedback_endpoint_descriptor), \
+        .bDescriptorType = USB_DT_ENDPOINT, .bEndpointAddress = EP_AUDIO_FEEDBACK_IN, \
+        .bmAttributes = 0x11, .wMaxPacketSize = 4, .bInterval = 1, \
+    }, \
+}
+#endif
 
 struct configuration_descriptor {
   struct usb_configuration_descriptor config;
@@ -79,6 +120,12 @@ struct configuration_descriptor {
     } __attribute__((packed)) as_alt1;
     struct as_alt as_alt2;
     struct as_alt as_alt3;
+#if PICODAC_OUTPUT_SPDIF
+    struct as_alt as_ac3;
+    struct as_alt as_dts_i;
+    struct as_alt as_dts_ii;
+    struct as_alt as_dts_iii;
+#endif
   } __attribute__((packed)) as;
 #if HID_ENABLE
   struct hid {
@@ -134,7 +181,8 @@ struct configuration_descriptor {
                     .bDescriptorType = USB_DT_CS_INTERFACE,
                     .bDescriptorSubtype = 0x01,  // HEADER
                     .bcdACD = 0x0200,            // ADC version
-                    .bCategory = 0x01,           // Desktop Speaker
+                    .bCategory = PICODAC_OUTPUT_SPDIF ? 0x06 : 0x01,
+                    // Digital converter / desktop speaker
                     .wTotalLength =
                         sizeof(struct ac) -
                         sizeof(usb_standard_ac_interface_descriptor),
@@ -177,7 +225,8 @@ struct configuration_descriptor {
                     .bDescriptorType = USB_DT_CS_INTERFACE,
                     .bDescriptorSubtype = 0x03,  // OUTPUT_TERMINAL
                     .bTerminalID = AUDIO_CONTROL_ID_OUTPUT,
-                    .wTerminalType = 0x0304,  // Desktop Speaker
+                    .wTerminalType = PICODAC_OUTPUT_SPDIF ? 0x0605 : 0x0304,
+                    // External SPDIF / desktop speaker
                     .bAssocTerminal = 0x001,  // Assoc (Input)
                     .bSourceID = AUDIO_CONTROL_ID_FEATURE_UNIT,
                     .bCSourceID = AUDIO_CONTROL_ID_CLOCK,  // Clock Source
@@ -464,6 +513,12 @@ struct configuration_descriptor {
                             .bInterval = 1,
                         },
                 },
+            #if PICODAC_OUTPUT_SPDIF
+            .as_ac3 = USB_IEC61937_ALT(AUDIO_ALT_AC3, AUDIO_FORMAT_III_AC3),
+            .as_dts_i = USB_IEC61937_ALT(AUDIO_ALT_DTS_I, AUDIO_FORMAT_III_DTS_I),
+            .as_dts_ii = USB_IEC61937_ALT(AUDIO_ALT_DTS_II, AUDIO_FORMAT_III_DTS_II),
+            .as_dts_iii = USB_IEC61937_ALT(AUDIO_ALT_DTS_III, AUDIO_FORMAT_III_DTS_III),
+            #endif
         },
 #if HID_ENABLE
     .hid =

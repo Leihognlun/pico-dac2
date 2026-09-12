@@ -33,6 +33,7 @@ static audio_output_config_t audio_output_config;
 
 static uint32_t current_sample_rate = 48000;
 static uint8_t current_bit_depth = 16;
+static bool current_non_pcm = false;
 
 static float steady_buffer_fill_ratio = 0;
 
@@ -99,7 +100,7 @@ void audio_device_init(void) {
   };
 
   // Initialize the selected output backend.
-  audio_output_init(&audio_output_config);
+  audio_output_init(&audio_output_config, false);
   // audio_output_start(&audio_output_config);
   blink_set_period_us(1000000);
 }
@@ -169,6 +170,14 @@ void audio_device_task(void) {
           static int32_t temp_buf[AUDIO_OUTPUT_MAX_FRAMES * 2];
           assert(bytes_to_read <= sizeof(temp_buf));
           ringbuffer_read(&rb, (uint8_t *)temp_buf, bytes_to_read);
+
+          if (current_non_pcm) {
+            // IEC 61937 Pa/Pb/Pc/Pd, payload and padding must reach the
+            // receiver bit-for-bit. Gain or per-channel mute corrupts bursts.
+            memcpy(audio_output_buf, temp_buf, bytes_to_read);
+            audio_output_submit_buffer();
+            break;
+          }
 
           // Get gain values for left, right, and master channels
           int16_t left_gain_db = volume[1] / 256;
@@ -251,10 +260,12 @@ bool audio_device_is_playing() { return g_current_state == STATE_PLAYING; }
 //--------------------------------------------------------------------+/
 // Audio Stream State Control
 //--------------------------------------------------------------------+/
-void audio_device_stream_start(uint8_t bit_depth) {
-  LOG_INFO("Starting stream with %d bits, %lu Hz", bit_depth,
-           current_sample_rate);
+void audio_device_stream_start(uint8_t bit_depth, bool non_pcm) {
+  assert(!non_pcm || (PICODAC_OUTPUT_SPDIF && bit_depth == 16));
+  LOG_INFO("Starting %s stream with %d bits, %lu Hz",
+           non_pcm ? "IEC61937" : "PCM", bit_depth, current_sample_rate);
   current_bit_depth = bit_depth;
+  current_non_pcm = non_pcm;
   audio_output_deinit(&audio_output_config);
   // --- Audio output configuration ---
   audio_output_config = (audio_output_config_t){
@@ -265,7 +276,7 @@ void audio_device_stream_start(uint8_t bit_depth) {
       .buffer_frames = current_sample_rate / 1000,
       .sample_rate = current_sample_rate,
   };
-  audio_output_init(&audio_output_config);
+  audio_output_init(&audio_output_config, current_non_pcm);
   // audio_output_start(current_sample_rate, bit_depth, current_sample_rate / 1000);
 
   ringbuffer_resize(&rb, calc_buffer_size(current_sample_rate));
@@ -331,7 +342,7 @@ void audio_device_set_sampling_freq(uint32_t freq) {
   bool active = g_current_state != STATE_STOPPED;
   audio_device_stream_stop();
   current_sample_rate = freq;
-  if (active) audio_device_stream_start(current_bit_depth);
+  if (active) audio_device_stream_start(current_bit_depth, current_non_pcm);
 }
 
 uint32_t audio_device_get_sampling_freq(void) { return current_sample_rate; }

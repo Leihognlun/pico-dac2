@@ -13,15 +13,14 @@ static uint32_t decode(const uint32_t *words) {
   unsigned ones = 0;
   for (unsigned slot = 4; slot < 32; ++slot) ones += (payload >> slot) & 1;
   assert((ones & 1) == 0);
-  assert((payload & 0x30000000) == 0); // Valid PCM, no user data.
   return payload;
 }
 
 static void check_block(const int32_t *pcm, unsigned depth, unsigned rate,
-                        unsigned code) {
+                        unsigned code, bool non_pcm) {
   uint32_t words[SPDIF_BLOCK_WORDS + 2];
   words[0] = words[SPDIF_BLOCK_WORDS + 1] = 0xdeadbeef;
-  spdif_encode_block(words + 1, pcm, depth, rate);
+  spdif_encode_block(words + 1, pcm, depth, rate, non_pcm);
   assert(words[0] == 0xdeadbeef && words[SPDIF_BLOCK_WORDS + 1] == 0xdeadbeef);
   uint8_t status[2][24] = {{0}};
   for (unsigned frame = 0; frame < 192; ++frame) {
@@ -38,6 +37,8 @@ static void check_block(const int32_t *pcm, unsigned depth, unsigned rate,
       unsigned expected = channel ? 0xe4 : (frame ? 0xe2 : 0xe8);
       assert(levels == expected || levels == (expected ^ 255));
       uint32_t data = decode(sf);
+      assert(((data >> 28) & 1) == non_pcm);
+      assert((data & 0x20000000) == 0); // No user data.
       uint32_t sample = pcm ? (uint32_t)pcm[frame * 2 + channel] : 0;
       unsigned wanted = depth == 16 ? (sample & 0xffff) * 256 :
                         depth == 24 ? sample & 0xffffff : sample / 256;
@@ -46,7 +47,7 @@ static void check_block(const int32_t *pcm, unsigned depth, unsigned rate,
     }
   }
   for (unsigned channel = 0; channel < 2; ++channel) {
-    assert(status[channel][0] == 4);
+    assert(status[channel][0] == (non_pcm ? 6 : 4));
     assert(status[channel][1] == 0 && status[channel][2] == 0);
     assert(status[channel][3] == code);
     assert(status[channel][4] == (depth == 16 ? 2 : 11));
@@ -72,10 +73,14 @@ int main(void) {
     samples[2] = (int32_t)(1u << (depth - 1));
     samples[3] = (int32_t)((1u << (depth - 1)) - 1);
     for (unsigned r = 0; r < 4; ++r) {
-      check_block(samples, depth, rates[r], codes[r]);
-      check_block(NULL, depth, rates[r], codes[r]);
+      check_block(samples, depth, rates[r], codes[r], false);
+      check_block(NULL, depth, rates[r], codes[r], false);
+      if (depth == 16) {
+        check_block(samples, depth, rates[r], codes[r], true);
+        check_block(NULL, depth, rates[r], codes[r], true);
+      }
     }
   }
-  puts("PASS: 12 rate/depth combinations, PCM and silence, preambles, parity, channel status");
+  puts("PASS: PCM and IEC61937 encoding, zero padding, preambles, parity, channel status and validity");
   return 0;
 }

@@ -38,7 +38,8 @@ float audio_device_get_steady_buffer_fill_ratio();
 bool audio_device_is_playing();
 
 // --- Audio Stream State Control ---
-void audio_device_stream_start(uint8_t bit_depth);
+// non_pcm: 16-bit IEC 61937 carrier, bypassing all software gain/mute.
+void audio_device_stream_start(uint8_t bit_depth, bool non_pcm);
 void audio_device_stream_stop(void);
 
 // --- Audio Feature Control (to be called from USB control request handlers)

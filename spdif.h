@@ -3,7 +3,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-void spdif_init(unsigned pin, uint32_t sample_rate, uint8_t bit_depth);
+void spdif_init(unsigned pin, uint32_t sample_rate, uint8_t bit_depth,
+                bool non_pcm);
 void spdif_deinit(void);
 void spdif_start(void);
 void spdif_stop(void);

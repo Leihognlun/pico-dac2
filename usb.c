@@ -63,6 +63,7 @@ struct usb_event_t {
 static uint8_t device_address = 0;
 static bool should_set_address = false;
 static volatile bool configured = false;
+static uint8_t alt_settings[MUSB_MAX_INTERFACES];
 
 #define usb_hw_set hw_set_alias(usb_hw)
 #define usb_hw_clear hw_clear_alias(usb_hw)
@@ -390,8 +391,9 @@ static void usb_handle_standard_request(const struct usb_setup_packet_t* pkt) {
           case USB_REQ_SET_INTERFACE: {
             uint8_t itf = pkt->wIndex & 0xFF;
             uint8_t alt = pkt->wValue & 0xFF;
-            assert(interface_handler.set[itf]);
-            if (usb_set_interface(itf, alt) &&
+            if (pkt->wIndex < INTERFACE_NUM && pkt->wValue <= UINT8_MAX &&
+                pkt->wLength == 0 && interface_handler.set[itf] &&
+                usb_set_interface(itf, alt) &&
                 interface_handler.set[itf](alt)) {
               usb_ep0_out_ack();
             } else {
@@ -404,6 +406,14 @@ static void usb_handle_standard_request(const struct usb_setup_packet_t* pkt) {
         }
       } else {
         switch (pkt->bRequest) {
+          case USB_REQ_GET_INTERFACE:
+            if (pkt->wIndex >= INTERFACE_NUM || pkt->wValue != 0 ||
+                pkt->wLength != 1 || !configured) {
+              usb_ep0_stall();
+            } else {
+              usb_ep0_start_transfer(&alt_settings[pkt->wIndex], 1);
+            }
+            return;
           case USB_REQ_GET_STATUS:
             static const uint16_t zero = 0;
             usb_ep0_start_transfer((void*)&zero, 2);
@@ -638,6 +648,10 @@ static void usb_bus_reset() {
   usb_hw->dev_addr_ctrl = device_address = 0;
   should_set_address = false;
   configured = false;
+  memset(alt_settings, 0, sizeof(alt_settings));
+  for (unsigned i = 0; i < INTERFACE_NUM; ++i) {
+    if (interface_handler.set[i]) interface_handler.set[i](0);
+  }
 
   // TODO EPをリセット。今は next_pid だけ
   for (int i = 0; i < USB_NUM_ENDPOINTS; ++i) {
@@ -874,7 +888,6 @@ void walk_descriptor(
   }
 }
 
-static uint8_t alt_settings[MUSB_MAX_INTERFACES];
 static uint16_t max_packet_size_in[16];
 static uint16_t max_packet_size_out[16];
 
@@ -952,6 +965,11 @@ static void usb_layout_buffers() {
 
 uint8_t current_config = 0;
 static bool usb_set_configuration(uint8_t config) {
+  if (config > 1) return false;
+  // Closing/reconfiguring USB must also discard the old audio stream.
+  for (unsigned i = 0; i < INTERFACE_NUM; ++i) {
+    if (interface_handler.set[i]) interface_handler.set[i](0);
+  }
   // 既存のエンドポイントを初期化
   for (int i = 0;
        i < sizeof(usb_dpram->ep_ctrl) / sizeof(usb_dpram->ep_ctrl[0]); ++i) {
@@ -992,6 +1010,22 @@ static bool usb_set_interface(uint8_t itf, uint8_t alt) {
   // 指定の config に差し替える
   void* desc = (void*)&configuration_descriptor;
   uint16_t len = sizeof(configuration_descriptor);
+
+  // Reject unknown alternate settings before disabling the active endpoints.
+  bool found = false;
+  const uint8_t *p = desc;
+  const uint8_t *end = p + len;
+  while (p < end) {
+    if (p[1] == USB_DT_INTERFACE) {
+      const struct usb_interface_descriptor_t *id = (const void *)p;
+      if (id->bInterfaceNumber == itf && id->bAlternateSetting == alt) {
+        found = true;
+        break;
+      }
+    }
+    p += p[0];
+  }
+  if (!found) return false;
 
   // EP を有効化
   walk_descriptor(desc, len, itf, alt_settings[itf], disable_ep);

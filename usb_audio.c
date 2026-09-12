@@ -16,9 +16,21 @@ typedef enum {
 } usb_sample_format_t;
 
 static usb_sample_format_t g_format = USB_SAMPLE_FORMAT_16;
+static uint8_t audio_stream_current_alt = 0;
 
 static void ep_audio_out_handler(const uint8_t* buf, uint16_t len) {
   // LOG_DEBUG("ep_audio_out_handler: %d bytes received", len);
+
+  // Ignore a late completion after the host has closed the stream.
+  if (audio_stream_current_alt == 0) return;
+  const uint16_t max_packet = audio_stream_current_alt >= AUDIO_ALT_AC3 ?
+      AUDIO_IEC61937_MAX_PACKET_SIZE : AUDIO_MAX_PACKET_SIZE;
+  const unsigned frame_bytes = g_format == USB_SAMPLE_FORMAT_16 ? 4 : 8;
+  if (len > max_packet || len % frame_bytes) {
+    LOG_WARN("Discarding malformed audio packet: %u bytes", len);
+    usb_ep_n_start_transfer(EP_AUDIO_STREAM_OUT, false, NULL, max_packet);
+    return;
+  }
 
   const uint32_t* usb_buf = (const uint32_t*)buf;
 
@@ -57,7 +69,7 @@ static void ep_audio_out_handler(const uint8_t* buf, uint16_t len) {
     audio_device_on_usb_rx(samples, num_samples);
   }
   // 次の転送準備
-  usb_ep_n_start_transfer(EP_AUDIO_STREAM_OUT, false, NULL, (96 + 1) * 4 * 2);
+  usb_ep_n_start_transfer(EP_AUDIO_STREAM_OUT, false, NULL, max_packet);
 }
 
 static void feedback() {
@@ -93,11 +105,10 @@ static void ep_audio_in_handler() {
 
 bool usb_audio_control_set_interface(uint8_t alt) { return alt == 0; }
 
-static uint8_t audio_stream_current_alt = 0;
 bool usb_audio_stream_set_interface(uint8_t alt) {
   // 新しい alt を設定する
   LOG_INFO("Set interface AUDIO_STREAM alt %d\r", alt);
-  if (3 < alt) {
+  if (AUDIO_ALT_MAX < alt) {
     LOG_ERROR("unknown alt: %d", alt);
     return false;
   }
@@ -107,14 +118,21 @@ bool usb_audio_stream_set_interface(uint8_t alt) {
   audio_device_stream_stop();
 
   if (alt == 1) {
-    audio_device_stream_start(16);
+    audio_device_stream_start(16, false);
     g_format = USB_SAMPLE_FORMAT_16;
   } else if (alt == 2) {
-    audio_device_stream_start(24);
+    audio_device_stream_start(24, false);
     g_format = USB_SAMPLE_FORMAT_24;
   } else if (alt == 3) {
-    audio_device_stream_start(32);
+    audio_device_stream_start(32, false);
     g_format = USB_SAMPLE_FORMAT_32;
+#if PICODAC_OUTPUT_SPDIF
+  } else if (alt >= AUDIO_ALT_AC3) {
+    // Type III is an already packed IEC 61937 stereo/16-bit carrier.
+    // Reuse the lossless 16-bit unpacker; no codec parsing or re-encoding.
+    audio_device_stream_start(16, true);
+    g_format = USB_SAMPLE_FORMAT_16;
+#endif
   }
 
   if (alt != 0) {

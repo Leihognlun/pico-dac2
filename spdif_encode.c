@@ -27,12 +27,14 @@ static uint8_t frequency_code(uint32_t rate) {
 }
 
 void spdif_encode_block(uint32_t *out, const int32_t *pcm,
-                        uint8_t bit_depth, uint32_t sample_rate) {
+                        uint8_t bit_depth, uint32_t sample_rate, bool non_pcm) {
   assert(bit_depth == 16 || bit_depth == 24 || bit_depth == 32);
-  // Consumer, linear PCM, copying permitted, general category.
+  assert(!non_pcm || bit_depth == 16);
+  // Consumer, copying permitted, general category. Channel-status bit 1
+  // identifies IEC 61937 compressed data (never interpret it as PCM).
   // Byte 3: sample frequency; byte 4: 16 or 24 significant bits.
   const uint8_t status[24] = {
-      0x04, 0x00, 0x00, frequency_code(sample_rate),
+      non_pcm ? 0x06 : 0x04, 0x00, 0x00, frequency_code(sample_rate),
       bit_depth == 16 ? 0x02 : 0x0b};
   for (unsigned frame = 0; frame < SPDIF_BLOCK_FRAMES; ++frame) {
     unsigned c = (status[frame / 8] >> (frame % 8)) & 1u;
@@ -40,8 +42,10 @@ void spdif_encode_block(uint32_t *out, const int32_t *pcm,
       uint32_t sample = pcm ? (uint32_t)*pcm++ : 0;
       if (bit_depth == 16) sample <<= 8;
       if (bit_depth == 32) sample >>= 8;
-      // IEC 60958 slots 4..27: 24-bit sample, then V=0, U=0, C, P.
-      uint32_t payload = ((sample & 0xffffffu) << 4) | (c << 30);
+      // IEC 60958 slots 4..27: audio/data, then V, U=0, C, P.
+      // V=1 in non-PCM mode: these words are unsuitable for PCM D/A.
+      uint32_t payload = ((sample & 0xffffffu) << 4) |
+                         ((uint32_t)non_pcm << 28) | (c << 30);
       uint32_t parity = payload;
       parity ^= parity >> 16;
       parity ^= parity >> 8;

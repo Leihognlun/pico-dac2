@@ -9,8 +9,9 @@ typedef i2s_config_t audio_output_config_t;
 #include "spdif.h"
 #include "spdif_encode.h"
 #define AUDIO_OUTPUT_MAX_FRAMES SPDIF_BLOCK_FRAMES
-static inline void audio_output_init(const audio_output_config_t *config) {
-  spdif_init(PICODAC_SPDIF_PIN, config->sample_rate, config->bit_depth);
+static inline void audio_output_init(const audio_output_config_t *config,
+                                     bool non_pcm) {
+  spdif_init(PICODAC_SPDIF_PIN, config->sample_rate, config->bit_depth, non_pcm);
 }
 static inline void audio_output_deinit(const audio_output_config_t *config) {
   (void)config;
@@ -35,7 +36,11 @@ static inline uint32_t audio_output_get_buffer_size_frames(
 #define audio_output_submit_buffer spdif_submit_buffer
 #else
 #define AUDIO_OUTPUT_MAX_FRAMES 96u
-#define audio_output_init i2s_init
+static inline void audio_output_init(const audio_output_config_t *config,
+                                     bool non_pcm) {
+  (void)non_pcm; // Type III alternate settings are absent in I2S builds.
+  i2s_init(config);
+}
 #define audio_output_deinit i2s_deinit
 #define audio_output_start i2s_start
 #define audio_output_stop i2s_stop

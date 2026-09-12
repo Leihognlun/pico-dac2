@@ -10,6 +10,11 @@ This project provides firmware to enable the Raspberry Pi Pico as a USB DAC (Dig
   16/24-bit output; 32-bit USB samples are truncated to their upper 24 bits.
   Select `PICODAC_OUTPUT=I2S` to build the original I2S output instead.
   See [SPDIF setup and validation (中文)](SPDIF.md).
+- **Dolby Digital / DTS passthrough:** The SPDIF build exposes UAC2 Type III
+  AC-3 and DTS-I/II/III formats. Already-packed IEC 61937 data bypasses software
+  volume/mute and is transmitted with Non-PCM channel status. Requires a
+  passthrough-capable player and an AC-3/DTS receiver; this firmware does not
+  encode multichannel PCM. See [setup and limitations](SPDIF.md#dolby-digital--dts-透传).
 - **USB Audio Class 2.0 Compliant:**
   - Works on many operating systems (Windows, macOS, Linux) without requiring driver installation.
   - Supports flow control via the Feedback Endpoint.

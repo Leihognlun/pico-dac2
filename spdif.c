@@ -23,6 +23,7 @@ static int writing = -1;
 static uint sm, offset, dma_channel, output_pin;
 static uint32_t rate;
 static uint8_t depth;
+static bool stream_non_pcm;
 static bool initialized, running;
 
 static void __isr __time_critical_func(spdif_dma_handler)(void) {
@@ -34,15 +35,19 @@ static void __isr __time_critical_func(spdif_dma_handler)(void) {
                             playing < 0 ? silence : encoded[playing], true);
 }
 
-void spdif_init(unsigned pin, uint32_t sample_rate, uint8_t bit_depth) {
+void spdif_init(unsigned pin, uint32_t sample_rate, uint8_t bit_depth,
+                bool non_pcm) {
   assert(!initialized);
   assert(pin < NUM_BANK0_GPIOS);
   assert(bit_depth == 16 || bit_depth == 24 || bit_depth == 32);
   output_pin = pin;
   rate = sample_rate;
   depth = bit_depth;
+  stream_non_pcm = non_pcm;
   spdif_encode_init();
-  spdif_encode_block(silence, NULL, depth, rate);
+  // During starvation keep the Non-PCM status, including on zero padding.
+  // Do not make a compressed receiver switch to PCM in the middle of a burst.
+  spdif_encode_block(silence, NULL, depth, rate, stream_non_pcm);
   sm = pio_claim_unused_sm(SPDIF_PIO, true);
   offset = pio_add_program(SPDIF_PIO, &picodac_spdif_program);
   pio_gpio_init(SPDIF_PIO, pin);
@@ -131,7 +136,7 @@ int32_t *spdif_write_buffer(void) {
 
 void spdif_submit_buffer(void) {
   assert(writing >= 0);
-  spdif_encode_block(encoded[writing], pcm, depth, rate);
+  spdif_encode_block(encoded[writing], pcm, depth, rate, stream_non_pcm);
   uint32_t interrupts = save_and_disable_interrupts();
   __mem_fence_release();
   queued = writing;
