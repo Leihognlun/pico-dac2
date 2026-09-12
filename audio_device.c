@@ -4,7 +4,7 @@
 #include <string.h>
 
 #include "blink.h"
-#include "i2s.h"
+#include "audio_output.h"
 #include "log.h"
 #include "ringbuffer.h"
 
@@ -29,7 +29,7 @@ enum {
 // --- Module-level Static Variables ---
 static ringbuffer_t rb;
 static app_state_t g_current_state;
-static i2s_config_t i2s_config;
+static audio_output_config_t audio_output_config;
 
 static uint32_t current_sample_rate = 48000;
 static uint8_t current_bit_depth = 16;
@@ -73,7 +73,8 @@ static const uint32_t gain_lookup_table[97] = {
 
 static uint32_t calc_buffer_size(uint32_t sample_rate) {
   // sample_rate (kHz) * 2ch * 16ms * 4bytes/sample
-  return sample_rate * 2 * 16 * 4 / 1000;
+  // Round to complete stereo frames, including at 44.1/88.2 kHz.
+  return (sample_rate * 16 / 1000) * 2 * sizeof(int32_t);
 }
 
 //--------------------------------------------------------------------+/
@@ -87,8 +88,8 @@ void audio_device_init(void) {
   ringbuffer_init(&rb, calc_buffer_size(current_sample_rate),
                   calc_buffer_size(SAMPLE_RATES[N_SAMPLE_RATES - 1]));
 
-  // --- I2S Config Setup ---
-  i2s_config = (i2s_config_t){
+  // --- Audio output configuration ---
+  audio_output_config = (audio_output_config_t){
       .data_pin = I2S_DATA_PIN,
       .clock_pin_base = I2S_CLOCK_PIN_BASE,
       .pio_instance = PIO,
@@ -97,16 +98,16 @@ void audio_device_init(void) {
       .sample_rate = current_sample_rate,
   };
 
-  // Initial setup of I2S hardware
-  i2s_init(&i2s_config);
-  // i2s_start(&i2s_config);
+  // Initialize the selected output backend.
+  audio_output_init(&audio_output_config);
+  // audio_output_start(&audio_output_config);
   blink_set_period_us(1000000);
 }
 
 //--------------------------------------------------------------------+/
 // Main loop tasks
 //--------------------------------------------------------------------+/
-// This is the equivalent of i2s_task() in main.c
+// This is the equivalent of audio_output_task() in main.c
 void audio_device_task(void) {
   switch (g_current_state) {
     case STATE_STOPPED:
@@ -116,9 +117,9 @@ void audio_device_task(void) {
     case STATE_BUFFERING:
       // Buffering, wait for buffer to be sufficiently full
       if (SAFE_WATER_LEVEL <= ringbuffer_fill_ratio(&rb)) {
-        LOG_DEBUG("Buffer reached safe level. Starting I2S playback....");
-        i2s_start(&i2s_config);
-        i2s_unmute();
+        LOG_DEBUG("Buffer reached safe level. Starting audio playback....");
+        audio_output_start(&audio_output_config);
+        audio_output_unmute();
         g_current_state = STATE_PLAYING;
         blink_led_on();
       }
@@ -132,39 +133,40 @@ void audio_device_task(void) {
         blink_led_on();
       } else {
         // Keep feeding silence while stalled
-        if (i2s_is_buffer_ready()) {
-          int32_t *i2s_buf = i2s_get_write_buffer();
-          const uint32_t i2s_buf_size_frames =
-              i2s_get_buffer_size_frames(&i2s_config);
-          memset(i2s_buf, 0, i2s_buf_size_frames * sizeof(int32_t) * 2);
+        if (audio_output_is_buffer_ready()) {
+          int32_t *audio_output_buf = audio_output_get_write_buffer();
+          const uint32_t audio_output_buf_size_frames =
+              audio_output_get_buffer_size_frames(&audio_output_config);
+          memset(audio_output_buf, 0, audio_output_buf_size_frames * sizeof(int32_t) * 2);
+          audio_output_submit_buffer();
         }
       }
       break;
 
     case STATE_PLAYING:
-      // Playing, keep feeding I2S buffer
-      if (i2s_is_buffer_ready()) {
-        int32_t *i2s_buf = i2s_get_write_buffer();
-        const uint32_t i2s_buf_size_frames =
-            i2s_get_buffer_size_frames(&i2s_config);
+      // Playing, keep feeding the selected audio output
+      if (audio_output_is_buffer_ready()) {
+        int32_t *audio_output_buf = audio_output_get_write_buffer();
+        const uint32_t audio_output_buf_size_frames =
+            audio_output_get_buffer_size_frames(&audio_output_config);
         const uint32_t bytes_to_read =
-            i2s_buf_size_frames * sizeof(int32_t) * 2;
+            audio_output_buf_size_frames * sizeof(int32_t) * 2;
 
         // Check for underrun
         float buffer_level = steady_buffer_fill_ratio =
             ringbuffer_fill_ratio(&rb);
-        if (buffer_level <= UNDERRUN_WATER_LEVEL) {
+        if (buffer_level <= UNDERRUN_WATER_LEVEL ||
+            ringbuffer_count(&rb) < bytes_to_read) {
           // Underrun: change state to STALLED
           LOG_DEBUG("Underrun! Ratio: %.2f. Entering STALLED state.",
                     buffer_level);
           g_current_state = STATE_STALLED;
           blink_set_period_us(250000);
           // Feed silence once to avoid noise
-          memset(i2s_buf, 0, i2s_buf_size_frames * sizeof(int32_t) * 2);
+          memset(audio_output_buf, 0, audio_output_buf_size_frames * sizeof(int32_t) * 2);
         } else {
-          // 最大サイズは 96kHz、1ms バッファで決め打ちして計算
-          // 仮定が成立しない場合は assert で検知する
-          static int32_t temp_buf[96 * 2];
+          // Space for one complete output block (192 frames for SPDIF).
+          static int32_t temp_buf[AUDIO_OUTPUT_MAX_FRAMES * 2];
           assert(bytes_to_read <= sizeof(temp_buf));
           ringbuffer_read(&rb, (uint8_t *)temp_buf, bytes_to_read);
 
@@ -194,7 +196,7 @@ void audio_device_task(void) {
           }
 
           // Apply gain
-          for (uint32_t i = 0; i < i2s_buf_size_frames; ++i) {
+          for (uint32_t i = 0; i < audio_output_buf_size_frames; ++i) {
             int64_t left = (int64_t)temp_buf[i * 2];
             int64_t right = (int64_t)temp_buf[i * 2 + 1];
 
@@ -204,11 +206,12 @@ void audio_device_task(void) {
             right = (right * right_gain_scaled) >> 31;
             right = (right * master_gain_scaled) >> 31;
 
-            // Convert back to int32_t for I2S buffer
-            i2s_buf[2 * i] = (int32_t)left;
-            i2s_buf[2 * i + 1] = (int32_t)right;
+            // Both backends consume signed, right-aligned PCM.
+            audio_output_buf[2 * i] = (int32_t)left;
+            audio_output_buf[2 * i + 1] = (int32_t)right;
           }
         }
+        audio_output_submit_buffer();
       }
       break;
   }
@@ -252,9 +255,9 @@ void audio_device_stream_start(uint8_t bit_depth) {
   LOG_INFO("Starting stream with %d bits, %lu Hz", bit_depth,
            current_sample_rate);
   current_bit_depth = bit_depth;
-  i2s_deinit(&i2s_config);
-  // --- I2S Config Setup ---
-  i2s_config = (i2s_config_t){
+  audio_output_deinit(&audio_output_config);
+  // --- Audio output configuration ---
+  audio_output_config = (audio_output_config_t){
       .data_pin = I2S_DATA_PIN,
       .clock_pin_base = I2S_CLOCK_PIN_BASE,
       .bit_depth = bit_depth,
@@ -262,18 +265,20 @@ void audio_device_stream_start(uint8_t bit_depth) {
       .buffer_frames = current_sample_rate / 1000,
       .sample_rate = current_sample_rate,
   };
-  i2s_init(&i2s_config);
-  // i2s_start(current_sample_rate, bit_depth, current_sample_rate / 1000);
+  audio_output_init(&audio_output_config);
+  // audio_output_start(current_sample_rate, bit_depth, current_sample_rate / 1000);
 
-  // resize により clear も行われるため、明示的なクリアは不要
   ringbuffer_resize(&rb, calc_buffer_size(current_sample_rate));
+  // resize is a no-op at the same rate; discard samples from the old stream
+  // even when only the bit depth changes or playback restarts.
+  ringbuffer_clear(&rb);
   g_current_state = STATE_BUFFERING;
   blink_set_period_us(500000);
 }
 
 void audio_device_stream_stop(void) {
   LOG_DEBUG("Stopping stream");
-  i2s_stop(&i2s_config);
+  audio_output_stop(&audio_output_config);
   g_current_state = STATE_STOPPED;
   blink_set_period_us(1000000);
 }
@@ -323,11 +328,10 @@ void audio_device_get_volume_range(uint8_t channel, int16_t *min, int16_t *max,
 
 void audio_device_set_sampling_freq(uint32_t freq) {
   LOG_DEBUG("Clock set current freq: %ld", freq);
-  current_sample_rate = freq;
-
+  bool active = g_current_state != STATE_STOPPED;
   audio_device_stream_stop();
-  g_current_state = STATE_STOPPED;
-  blink_set_period_us(1000000);
+  current_sample_rate = freq;
+  if (active) audio_device_stream_start(current_bit_depth);
 }
 
 uint32_t audio_device_get_sampling_freq(void) { return current_sample_rate; }

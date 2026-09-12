@@ -1,0 +1,16 @@
+;
+; Copyright (c) 2020 Raspberry Pi (Trading) Ltd.
+; SPDX-License-Identifier: BSD-3-Clause
+;
+; Adapted from pico-extras/src/rp2_common/pico_audio_spdif/audio_spdif.pio.
+; Each NRZI transition bit takes two cycles; a stereo frame takes 256.
+.program picodac_spdif
+.side_set 1
+.wrap_target
+public output_low:
+    out x, 1            side 0
+    jmp !x, output_low  side 0
+output_high:
+    out x, 1            side 1
+    jmp !x, output_high side 1
+.wrap

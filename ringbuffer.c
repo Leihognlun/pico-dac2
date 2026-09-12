@@ -27,7 +27,7 @@ void ringbuffer_clear(ringbuffer_t *rb) {
   rb->full = false;
 }
 
-static size_t ringbuffer_count(const ringbuffer_t *rb) {
+size_t ringbuffer_count(const ringbuffer_t *rb) {
   assert(rb != NULL);
 
   if (rb->full) return rb->size;

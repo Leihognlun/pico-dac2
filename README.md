@@ -6,6 +6,10 @@ This project provides firmware to enable the Raspberry Pi Pico as a USB DAC (Dig
 
 ## Features
 
+- **SPDIF output (default):** GPIO 22, stereo 44.1/48/88.2/96 kHz,
+  16/24-bit output; 32-bit USB samples are truncated to their upper 24 bits.
+  Select `PICODAC_OUTPUT=I2S` to build the original I2S output instead.
+  See [SPDIF setup and validation (中文)](SPDIF.md).
 - **USB Audio Class 2.0 Compliant:**
   - Works on many operating systems (Windows, macOS, Linux) without requiring driver installation.
   - Supports flow control via the Feedback Endpoint.
@@ -21,7 +25,8 @@ This project provides firmware to enable the Raspberry Pi Pico as a USB DAC (Dig
 ## Required Hardware
 
 - Raspberry Pi Pico
-- I2S compatible DAC module (PCM5102A assumed)
+- A 3.3 V logic-compatible optical SPDIF transmitter or coaxial SPDIF
+  driver circuit; alternatively an I2S DAC module for the I2S build.
 - USB cable
 
 ## How to Build
@@ -46,8 +51,8 @@ Build the firmware using standard CMake build procedures.
 ```bash
 mkdir build
 cd build
-cmake ..
-make
+cmake .. -DPICODAC_OUTPUT=SPDIF -DPICODAC_SPDIF_PIN=22
+cmake --build .
 ```
 
 Upon successful compilation, a file named `mdac_adc2.uf2` will be generated in the `build` directory.
@@ -56,16 +61,16 @@ Upon successful compilation, a file named `mdac_adc2.uf2` will be generated in t
 
 The GPIO pins used for I2S can be modified in `CMakeLists.txt`. The default settings are as follows:
 
-- **I2S DATA:** GPIO 22
-- **I2S BCLK:** GPIO 20
-- **I2S LRCLK:** GPIO 21
+- **I2S DATA:** GPIO 18
+- **I2S BCLK:** GPIO 16
+- **I2S LRCLK:** GPIO 17
 
 ```cmake
 # CMakeLists.txt
 
 # user configurations
-set (PICODAC_I2S_DATA_PIN 22 CACHE STRING "I2S Data Pin")
-set (PICODAC_I2S_BASE_CLOCK_PIN 20 CACHE STRING "I2S Base Clock Pin. LRCLK is BASE + 1")
+set (PICODAC_I2S_DATA_PIN 18 CACHE STRING "I2S Data Pin")
+set (PICODAC_I2S_BASE_CLOCK_PIN 16 CACHE STRING "I2S Base Clock Pin. LRCLK is BASE + 1")
 ```
 
 ## Installation
@@ -77,7 +82,9 @@ set (PICODAC_I2S_BASE_CLOCK_PIN 20 CACHE STRING "I2S Base Clock Pin. LRCLK is BA
 
 ## Usage
 
-1. Connect your I2S DAC module correctly to the GPIO pins configured in `CMakeLists.txt`.
+1. Connect the SPDIF transmitter to GPIO 22 and GND as described in
+   [SPDIF.md](SPDIF.md), or connect your I2S DAC when building with
+   `-DPICODAC_OUTPUT=I2S`. Outputs are selected at build time, not simultaneous.
 2. Connect the Pico with the flashed firmware to a host (e.g., PC) via USB.
 3. The host OS will automatically recognize a new audio output device named `mdac_adc2` (or similar).
 4. Select this device as the output in your OS sound settings and play music or other audio.

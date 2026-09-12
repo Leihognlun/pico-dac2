@@ -25,6 +25,8 @@ void ringbuffer_clear(ringbuffer_t *rb);
 size_t ringbuffer_write(ringbuffer_t *rb, const uint8_t *data, size_t bytes);
 // 読み込み（バイト数指定）
 size_t ringbuffer_read(ringbuffer_t *rb, uint8_t *data, size_t bytes);
+// Number of readable bytes, for checking complete audio blocks.
+size_t ringbuffer_count(const ringbuffer_t *rb);
 // 充填率
 float ringbuffer_fill_ratio(const ringbuffer_t *rb);
 

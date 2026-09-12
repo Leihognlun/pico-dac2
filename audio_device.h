@@ -25,7 +25,7 @@ typedef enum {
 void audio_device_init(void);
 
 // --- Main loop tasks ---
-// Handles consuming data from the ring buffer and sending it to I2S.
+// Consumes the ring buffer and feeds the selected I2S or SPDIF output.
 // This should be called periodically in the main loop.
 void audio_device_task(void);
 

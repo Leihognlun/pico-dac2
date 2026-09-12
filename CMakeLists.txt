@@ -10,8 +10,17 @@ set(APP_NAME "mdac_adc2")
 set(BOARD_NAME "rp2040" CACHE STRING "Target board name")
 
 # user configurations
-set (PICODAC_I2S_DATA_PIN 22 CACHE STRING "I2S Data Pin")
-set (PICODAC_I2S_BASE_CLOCK_PIN 20 CACHE STRING "I2S Base Clock Pin. LRCLK is BASE + 1")
+set(PICODAC_OUTPUT "SPDIF" CACHE STRING "Audio output: SPDIF or I2S")
+set_property(CACHE PICODAC_OUTPUT PROPERTY STRINGS SPDIF I2S)
+set(PICODAC_SPDIF_PIN 22 CACHE STRING "SPDIF output GPIO")
+if(NOT PICODAC_OUTPUT STREQUAL "SPDIF" AND NOT PICODAC_OUTPUT STREQUAL "I2S")
+    message(FATAL_ERROR "PICODAC_OUTPUT must be SPDIF or I2S")
+endif()
+if(NOT PICODAC_SPDIF_PIN MATCHES "^[0-9]+$" OR PICODAC_SPDIF_PIN GREATER 29)
+    message(FATAL_ERROR "PICODAC_SPDIF_PIN must be an RP2040 GPIO number (0..29)")
+endif()
+set (PICODAC_I2S_DATA_PIN 18 CACHE STRING "I2S Data Pin")
+set (PICODAC_I2S_BASE_CLOCK_PIN 16 CACHE STRING "I2S Base Clock Pin. LRCLK is BASE + 1")
 set (PICODAC_VENDOR_ID 0xcafe CACHE STRING "USB Vendor ID")
 set (PICODAC_PRODUCT_ID 0xbabe CACHE STRING "USB Product ID")
 
@@ -22,21 +31,17 @@ set (PICODAC_PRODUCT_ID 0xbabe CACHE STRING "USB Product ID")
 if(BOARD_NAME STREQUAL "rp2040")
 
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
-# NOTE: VS Code Pico Extension relies on naive line-based parsing.
-#       These lines must remain at top-level indentation (no leading spaces),
-#       even if wrapped in an if(). Do not indent or reformat them.
 if(WIN32)
-set(USERHOME $ENV{USERPROFILE})
+    set(USERHOME $ENV{USERPROFILE})
 else()
-set(USERHOME $ENV{HOME})
+    set(USERHOME $ENV{HOME})
 endif()
-set(PICO_BOARD pico CACHE STRING "Board type")
-set(sdkVersion 2.2.0)
-set(toolchainVersion 14_2_Rel1)
-set(picotoolVersion 2.2.0)
+set(sdkVersion 2.3.1)
+set(toolchainVersion 15_2_Rel1)
+set(picotoolVersion 2.3.1)
 set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
 if (EXISTS ${picoVscode})
-include(${picoVscode})
+    include(${picoVscode})
 endif()
 # ====================================================================================
 
@@ -55,12 +60,19 @@ endif()
         main.c
         audio_device.c
         blink.c
-        i2s.c
         ringbuffer.c
         usb.c
         usb_audio.c
         usb_hid.c
     )
+    if(PICODAC_OUTPUT STREQUAL "SPDIF")
+        target_sources(mdac_adc2 PRIVATE spdif.c spdif_encode.c)
+        target_compile_definitions(mdac_adc2 PRIVATE PICODAC_OUTPUT_SPDIF=1)
+        pico_generate_pio_header(mdac_adc2 ${CMAKE_CURRENT_LIST_DIR}/spdif.pio)
+    else()
+        target_sources(mdac_adc2 PRIVATE i2s.c)
+        target_compile_definitions(mdac_adc2 PRIVATE PICODAC_OUTPUT_SPDIF=0)
+    endif()
     # Add the standard library to the build
     target_link_libraries(mdac_adc2
         hardware_dma
@@ -69,6 +81,7 @@ endif()
     )
 
     target_compile_definitions(mdac_adc2 PRIVATE
+        PICODAC_SPDIF_PIN=${PICODAC_SPDIF_PIN}
         PICODAC_I2S_DATA_PIN=${PICODAC_I2S_DATA_PIN}
         PICODAC_I2S_BASE_CLOCK_PIN=${PICODAC_I2S_BASE_CLOCK_PIN}
         PICO_PLL_VCO_MAX_FREQ_HZ=2304000000

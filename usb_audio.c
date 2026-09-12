@@ -255,9 +255,14 @@ bool usb_audio_control_ouot_request(const struct usb_setup_packet_t* pkt,
       (pkt->wIndex >> 8) == AUDIO_CONTROL_ID_CLOCK &&
       (pkt->wIndex & 0xFF) == INTERFACE_AUDIO_CONTROL) {
     // 周波数設定
-    assert(pkt->wLength == 4);
+    if (pkt->wLength != 4 || len != 4) return false;
     uint32_t freq = ((uint32_t)buf[0]) | ((uint32_t)buf[1] << 8) |
                     ((uint32_t)buf[2] << 16) | ((uint32_t)buf[3] << 24);
+    bool supported = false;
+    for (unsigned i = 0; i < N_SAMPLE_RATES; ++i) {
+      if (freq == SAMPLE_RATES[i]) supported = true;
+    }
+    if (!supported) return false;
     audio_device_set_sampling_freq(freq);
     return true;
   } else if (pkt->bmRequestType == 0x21 && pkt->bRequest == UAC2_CS_REQ_CUR &&
