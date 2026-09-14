@@ -3,6 +3,7 @@
 #include <assert.h>
 
 #include "audio_device.h"
+#include "audio_diagnostics.h"
 #include "log.h"
 #include "usb.h"
 #include "usb_config.h"
@@ -17,6 +18,9 @@ typedef enum {
 
 static usb_sample_format_t g_format = USB_SAMPLE_FORMAT_16;
 static uint8_t audio_stream_current_alt = 0;
+volatile uint32_t usb_audio_bad_packets;
+volatile uint32_t usb_audio_rx_packets;
+volatile uint32_t usb_audio_rx_frames;
 
 static void ep_audio_out_handler(const uint8_t* buf, uint16_t len) {
   // LOG_DEBUG("ep_audio_out_handler: %d bytes received", len);
@@ -27,15 +31,18 @@ static void ep_audio_out_handler(const uint8_t* buf, uint16_t len) {
       AUDIO_IEC61937_MAX_PACKET_SIZE : AUDIO_MAX_PACKET_SIZE;
   const unsigned frame_bytes = g_format == USB_SAMPLE_FORMAT_16 ? 4 : 8;
   if (len > max_packet || len % frame_bytes) {
-    LOG_WARN("Discarding malformed audio packet: %u bytes", len);
+    // 播放期间仅计数，避免日志阻塞收包。
+    ++usb_audio_bad_packets;
     usb_ep_n_start_transfer(EP_AUDIO_STREAM_OUT, false, NULL, max_packet);
     return;
   }
 
   const uint32_t* usb_buf = (const uint32_t*)buf;
+  ++usb_audio_rx_packets;
+  usb_audio_rx_frames += len / frame_bytes;
 
-  // samples は usb_buf の 2 倍(16bit時)もしくは同数(24bit時)
-  // ここでは多めに 2 倍取っておく
+  // samples 的元素数在 16 位模式下是 usb_buf 的两倍，24 位模式下相同
+  // 这里按两倍大小预留空间
   static int32_t samples[512 * 2];
 
   if (g_format == USB_SAMPLE_FORMAT_16) {
@@ -68,7 +75,7 @@ static void ep_audio_out_handler(const uint8_t* buf, uint16_t len) {
     }
     audio_device_on_usb_rx(samples, num_samples);
   }
-  // 次の転送準備
+  // 准备下一次传输
   usb_ep_n_start_transfer(EP_AUDIO_STREAM_OUT, false, NULL, max_packet);
 }
 
@@ -99,14 +106,14 @@ static void feedback() {
 static void ep_audio_in_handler() {
   //  feedback
   // LOG_DEBUG("ep_audio_in_handler");
-  // 次の feedback を予約
+  // 安排下一次反馈传输
   feedback();
 }
 
 bool usb_audio_control_set_interface(uint8_t alt) { return alt == 0; }
 
 bool usb_audio_stream_set_interface(uint8_t alt) {
-  // 新しい alt を設定する
+  // 设置新的备用接口设置 alt
   LOG_INFO("Set interface AUDIO_STREAM alt %d\r", alt);
   if (AUDIO_ALT_MAX < alt) {
     LOG_ERROR("unknown alt: %d", alt);
@@ -136,7 +143,7 @@ bool usb_audio_stream_set_interface(uint8_t alt) {
   }
 
   if (alt != 0) {
-    // フィードバックをトリガ
+    // 触发反馈传输
     feedback();
   }
 
@@ -272,7 +279,7 @@ bool usb_audio_control_ouot_request(const struct usb_setup_packet_t* pkt,
       (pkt->wValue >> 8) == UAC2_CS_SAM_FREQ_CONTROL &&
       (pkt->wIndex >> 8) == AUDIO_CONTROL_ID_CLOCK &&
       (pkt->wIndex & 0xFF) == INTERFACE_AUDIO_CONTROL) {
-    // 周波数設定
+    // 设置采样频率
     if (pkt->wLength != 4 || len != 4) return false;
     uint32_t freq = ((uint32_t)buf[0]) | ((uint32_t)buf[1] << 8) |
                     ((uint32_t)buf[2] << 16) | ((uint32_t)buf[3] << 24);
@@ -287,7 +294,7 @@ bool usb_audio_control_ouot_request(const struct usb_setup_packet_t* pkt,
              (pkt->wValue >> 8) == UAC2_FU_MUTE_CONTROL &&
              (pkt->wIndex >> 8) == AUDIO_CONTROL_ID_FEATURE_UNIT &&
              (pkt->wIndex & 0xFF) == INTERFACE_AUDIO_CONTROL) {
-    // mute 設定
+    // 设置静音
     assert(pkt->wLength == 1);
     uint8_t ch = pkt->wValue & 0xFF;
     audio_device_set_mute(ch, buf[0]);
@@ -297,7 +304,7 @@ bool usb_audio_control_ouot_request(const struct usb_setup_packet_t* pkt,
              (pkt->wValue >> 8) == UAC2_FU_VOLUME_CONTROL &&
              (pkt->wIndex >> 8) == AUDIO_CONTROL_ID_FEATURE_UNIT &&
              (pkt->wIndex & 0xFF) == INTERFACE_AUDIO_CONTROL) {
-    // 音量設定
+    // 设置音量
     assert(pkt->wLength == 0x02);
     int16_t vol = (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
     uint8_t ch = pkt->wValue & 0xFF;
@@ -311,7 +318,7 @@ bool usb_audio_control_ouot_request(const struct usb_setup_packet_t* pkt,
       "index=0x%04x, length=0x%04x)",
       pkt->bmRequestType, pkt->bRequest, pkt->wValue, pkt->wIndex,
       pkt->wLength);
-  // デフォルトは未処理
+  // 默认不处理
   return false;
 }
 

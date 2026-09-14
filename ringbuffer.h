@@ -9,30 +9,30 @@ extern "C" {
 #endif
 
 typedef struct {
-  uint8_t *buffer;  // バッファ本体（動的確保）
-  size_t size;      // バッファ長
-  size_t head;      // 書き込み位置インデックス
-  size_t tail;      // 読み出し位置インデックス
-  bool full;        // バッファが満杯かどうかのフラグ
-  size_t capacity;  // 実際に確保しているメモリ長 (常に size <= capacity)
+  uint8_t *buffer;  // 缓冲区存储空间（动态分配）
+  size_t size;      // 缓冲区长度
+  size_t head;      // 读取位置索引
+  size_t tail;      // 写入位置索引
+  bool full;        // 缓冲区是否已满的标志
+  size_t capacity;  // 实际分配的内存容量（始终满足 size <= capacity）
 } ringbuffer_t;
 
-// バッファを初期化（メモリ確保）
+// 初始化缓冲区（分配内存）
 int ringbuffer_init(ringbuffer_t *rb, size_t size, size_t capacity);
-// バッファをクリア
+// 清空缓冲区
 void ringbuffer_clear(ringbuffer_t *rb);
-// 書き込み（バイト数指定）
+// 写入数据（指定字节数）
 size_t ringbuffer_write(ringbuffer_t *rb, const uint8_t *data, size_t bytes);
-// 読み込み（バイト数指定）
+// 读取数据（指定字节数）
 size_t ringbuffer_read(ringbuffer_t *rb, uint8_t *data, size_t bytes);
 // Number of readable bytes, for checking complete audio blocks.
 size_t ringbuffer_count(const ringbuffer_t *rb);
-// 充填率
+// 填充比例
 float ringbuffer_fill_ratio(const ringbuffer_t *rb);
 
-// 再初期化（サイズ変更）
+// 重新初始化（调整大小）
 int ringbuffer_resize(ringbuffer_t *rb, size_t new_size);
-// バッファ解放
+// 释放缓冲区
 void ringbuffer_free(ringbuffer_t *rb);
 
 #ifdef __cplusplus

@@ -20,7 +20,7 @@
 #define RECOVERY_WATER_LEVEL 0.4
 #define PIO pio0
 
-// 256 刻みで指定
+// 以 256 为单位指定音量值
 enum {
   VOLUME_CTRL_0_DB = 0,
   VOLUME_CTRL_96_DB = 96 * 256,
@@ -45,11 +45,11 @@ static int8_t mute[3] = {0, 0, 0};  // 0: unmuted, 1: muted
 static int16_t volume[3] = {VOLUME_CTRL_0_DB, VOLUME_CTRL_0_DB,
                             VOLUME_CTRL_0_DB};
 
-// 事前計算した dB のゲインを 2^31 でスケールした LUT
-// -96dB(16bitオーディオのダイナミックレンジ相当)までサポートする
+// 预先计算的 dB 增益查找表，按 2^31 缩放
+// 支持低至 -96 dB（相当于 16 位音频的动态范围）
 
-// 計算式: gain = round(10^(db/20) * 2^31)
-// 実際のテーブルは以下の python コードで生成した
+// 计算公式：gain = round(10^(db/20) * 2^31)
+// 下表由以下 Python 代码生成
 // >>> print("[")
 // ... for i in range(96, -1, -1):
 // ...     print(f"0x{round(math.pow(10, -i/20) * (2**31)):08x}, ", end="")
@@ -240,17 +240,17 @@ void audio_device_on_usb_rx(const int32_t *buffer, uint32_t num_samples) {
   if (written != bytes) {
     audio_dropped_frames += (bytes - written) / (2 * sizeof(int32_t));
     // TODO
-    // リングバッファに書き込めない場合、本来は再生に追いつくために
-    // リングバッファの古いデータを捨てるのが望ましい
-    // ここでは暫定的にログの出力とする
+    // 环形缓冲区无法继续写入时，为了跟上播放进度，
+    // 理想的处理方式是丢弃缓冲区中的旧数据
+    // 这里暂时只输出日志
 
-    // INFO だとログ出力による遅延で正のフィードバックがかかり
-    // 問題が悪化する可能性が高いため DEBUG とする
+    // 使用 INFO 日志时，日志输出的延迟可能产生正反馈，
+    // 进一步加剧问题，因此使用 DEBUG 级别
     LOG_DEBUG("bytes: %d, but written: %d", bytes, written);
   }
 
-  // バッファレベルの測定
-  // 再生中は DMA 直前に測る
+  // 测量缓冲区填充水平
+  // 播放期间在向输出缓冲区供数前测量
   if (g_current_state != STATE_PLAYING) {
     steady_buffer_fill_ratio = ringbuffer_fill_ratio(&rb);
   }

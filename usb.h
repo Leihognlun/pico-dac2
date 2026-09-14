@@ -11,8 +11,8 @@ struct usb_setup_packet_t {
   uint16_t wLength;
 };
 
-// Endpoint Descriptor の bmAttributes の下位2bitと同じ数値を割り当てることで
-// 単純代入で型変換できる
+// 枚举值与端点描述符 bmAttributes 的低 2 位保持一致，
+// 因此可以直接赋值完成类型转换
 enum endpoint_type_t {
   USB_ENDPOINT_CONTROL = 0,
   USB_ENDPOINT_ISOCHRONOUS = 1,

@@ -10,7 +10,9 @@
 #include "pico/util/queue.h"
 #include "usb_common.h"
 #include "usb_buffer_control.h"
-// TODO 外部から設定できるよう修正
+#include "usb_audio_packet.h"
+#include "hardware/sync.h"
+// TODO 改为支持外部配置
 #include "usb_descriptor.h"
 
 #ifndef USB_QUEUE_LENGTH
@@ -51,6 +53,8 @@ struct usb_buff_done_t {
   bool in;
   volatile void* buf;
   uint16_t len;
+  bool audio_snapshot;
+  usb_audio_packet_t audio;
 };
 
 struct usb_event_t {
@@ -65,6 +69,9 @@ static uint8_t device_address = 0;
 static bool should_set_address = false;
 static volatile bool configured = false;
 static uint8_t alt_settings[MUSB_MAX_INTERFACES];
+static volatile bool audio_rx_enabled;
+static volatile uint32_t audio_rx_generation;
+volatile uint32_t usb_audio_queue_drops;
 
 #define usb_hw_set hw_set_alias(usb_hw)
 #define usb_hw_clear hw_clear_alias(usb_hw)
@@ -76,49 +83,48 @@ static void isr_usbctrl_handler();
 static void usb_setup_endpoints();
 
 void usb_device_init() {
-  // USB コントローラーをリセット
+  // 复位 USB 控制器
   reset_unreset_block_num_wait_blocking(RESET_USBCTRL);
   memset(usb_dpram, 0, sizeof(*usb_dpram));
 
-  // USB 割り込みハンドラを設定
+  // 设置 USB 中断处理函数
   irq_set_exclusive_handler(USBCTRL_IRQ, isr_usbctrl_handler);
 
-  // 割り込みを有効化
+  // 启用中断
   irq_set_enabled(USBCTRL_IRQ, true);
 
-  // mux 設定
-  // 通常利用では以下の値を指定する
-  // 他のビットは RP2040 チップ開発時の検証に用いられる
+  // 配置多路复用器
+  // 正常使用时指定以下值
+  // 其他位用于 RP2040 芯片开发阶段的验证
   usb_hw->muxing = USB_USB_MUXING_TO_PHY_BITS | USB_USB_MUXING_SOFTCON_BITS;
 
-  // VBUS 検知設定
-  // ソフトウェアから VBUS を検知したことにする
-  // 特定の GPIO を VBUS 検知用に設定しているボードでは不要
+  // 配置 VBUS 检测
+  // 通过软件将 VBUS 标记为已检测到
+  // 对于使用特定 GPIO 检测 VBUS 的开发板，无需此设置
   usb_hw->pwr =
       USB_USB_PWR_VBUS_DETECT_BITS | USB_USB_PWR_VBUS_DETECT_OVERRIDE_EN_BITS;
 
-  // デバイスモードに設定
-  // ホストモードでは USB_MAIN_CTRL_HOST_NDEVICE_BITS も指定する
+  // 设置为设备模式
+  // 主机模式下还需指定 USB_MAIN_CTRL_HOST_NDEVICE_BITS
   usb_hw->main_ctrl = USB_MAIN_CTRL_CONTROLLER_EN_BITS;
 
-  // EP0 バッファのステータス変化時に割り込みを有効化
-  // ここではシングルバッファ前提
+  // 在 EP0 缓冲区状态变化时触发中断
+  // 这里假定使用单缓冲区
   usb_hw->sie_ctrl = USB_SIE_CTRL_EP0_INT_1BUF_BITS;
 
-  // 割り込み発生タイミングを指定
-  // - バッファステータス変化
-  // - バスリセット
-  // - セットアップ要求
+  // 指定触发中断的事件
+  // - 缓冲区状态变化
+  // - 总线复位
+  // - 设置请求
   usb_hw->inte = USB_INTS_BUFF_STATUS_BITS | USB_INTS_BUS_RESET_BITS |
                  USB_INTS_SETUP_REQ_BITS;
 
-  // EP 設定
+  // 配置端点
   usb_setup_endpoints();
 
-  // USB Full Speed デバイスとして設定
-  usb_hw_set->sie_ctrl = USB_SIE_CTRL_PULLUP_EN_BITS;
-
+  // 配置为 USB 全速设备
   queue_init(&queue, sizeof(struct usb_event_t), USB_QUEUE_LENGTH);
+  usb_hw_set->sie_ctrl = USB_SIE_CTRL_PULLUP_EN_BITS;
 }
 
 static void event_put(struct usb_event_t* event) {
@@ -133,7 +139,7 @@ static void isr_usbctrl_handler() {
   uint32_t status = usb_hw->ints;
   uint32_t handled = 0;
 
-  struct usb_event_t event;
+  static struct usb_event_t event;
 
   if (status & USB_INTS_SETUP_REQ_BITS) {
     handled |= USB_INTS_SETUP_REQ_BITS;
@@ -180,7 +186,7 @@ static bool queue_get(struct usb_event_t* event) {
 #define USB_REQ_RECIPIENT_INTERFACE 0x01
 #define USB_REQ_RECIPIENT_ENDPOINT 0x02
 
-// 標準リクエスト bRequest
+// 标准请求 bRequest
 #define USB_REQ_GET_STATUS 0x00
 #define USB_REQ_CLEAR_FEATURE 0x01
 #define USB_REQ_SET_FEATURE 0x03
@@ -194,7 +200,7 @@ static bool queue_get(struct usb_event_t* event) {
 #define USB_REQ_SYNCH_FRAME 0x12
 static void usb_ep0_stall();
 
-// デバッグ出力の有効／無効を切り替えるマクロ
+// 控制调试输出启用或禁用的宏
 #define USB_DEBUG_SETUP 1
 
 #if USB_DEBUG_SETUP
@@ -276,7 +282,7 @@ static inline void debug_print_setup(const struct usb_setup_packet_t* pkt) {
   LOG_USB_DEBUG("  wIndex:        0x%04X", pkt->wIndex);
   LOG_USB_DEBUG("  wLength:       %u", pkt->wLength);
 #else
-  (void)pkt;  // 未使用警告を抑制
+  (void)pkt;  // 抑制未使用参数的警告
 #endif
 }
 #endif
@@ -340,7 +346,7 @@ static void usb_handle_standard_request(const struct usb_setup_packet_t* pkt) {
                     MIN(pkt->wLength, sizeof(dummy_string_descriptor)));
                 return;
               case USB_DT_QUALIFIER:
-                // Full-Speed 専用のため stall
+                // 仅支持全速模式，因此返回 STALL
                 usb_ep0_stall();
                 return;
               default:
@@ -420,7 +426,7 @@ static void usb_handle_standard_request(const struct usb_setup_packet_t* pkt) {
             usb_ep0_start_transfer((void*)&zero, 2);
             return;
 #if HID_ENABLE
-          // TODO 定数定義
+          // TODO 定义常量
           case 0x06:
             if ((pkt->wValue >> 8) == 0x22) {
               usb_ep0_start_transfer(
@@ -473,7 +479,7 @@ static void usb_handle_custom_request(const struct usb_setup_packet_t* pkt) {
     }
   } else {
     if (pkt->wLength == 0) {
-      // 0 byte の場合は即座に通知
+      // 长度为 0 字节时立即通知
       assert(interface_num < MUSB_MAX_INTERFACES);
       if (interface_handler.out[interface_num]) {
         handled |= interface_handler.out[interface_num](pkt, NULL, 0);
@@ -482,12 +488,12 @@ static void usb_handle_custom_request(const struct usb_setup_packet_t* pkt) {
         usb_ep0_out_ack();
       }
     } else {
-      // TODO 現状の実装制約。1パケットしか受け取れない
+      // TODO 当前实现仅能接收一个数据包
       assert(pkt->wLength <= 64);
       memcpy(&last_packet, pkt, 8);
       usb_ep_n_start_transfer(0, false, NULL, pkt->wLength);
-      // 実処理は Data Stage で行う。ここでは成功とみなす
-      // TODO この時点で stall するか選択するコールバック提供
+      // 实际处理在数据阶段进行，此处视为成功
+      // TODO 提供回调，以决定是否在此时返回 STALL
       handled = true;
     }
   }
@@ -529,7 +535,7 @@ static void usb_handle_buff_done(const struct usb_buff_done_t* buff_done);
 static void usb_bus_reset();
 
 void usb_device_task() {
-  struct usb_event_t event;
+  static struct usb_event_t event;
   for (int i = 0; i < USB_QUEUE_PCORESSES_MAX; ++i) {
     if (!queue_get(&event)) {
       break;
@@ -577,7 +583,7 @@ static void usb_reset_next_id(uint8_t ep_num) {
 
 static void usb_start_transfer(struct endpoint_config* ep, bool in,
                                const uint8_t* buf, size_t len) {
-  // 1パケット以上の転送は別途バッファ管理が必要
+  // 超过一个数据包的传输需要额外的缓冲区管理
   if (ep->max_packet_size < len) {
     LOG_USB_DEBUG("len: %d, max: %d", len, ep->max_packet_size);
   }
@@ -592,23 +598,26 @@ static void usb_start_transfer(struct endpoint_config* ep, bool in,
 
   uint32_t val = len | USB_BUF_CTRL_AVAIL;
 
-  // TX なら
+  // 发送数据时
   if (in) {
     memcpy((void*)ep->buf, buf, len);
-    // バッファ充填済みフラグをセット
+    // 设置缓冲区已填充标志
     val |= USB_BUF_CTRL_FULL;
   }
 
-  // PID を設定。交互に0と1を使う
+  // 设置 PID，交替使用 0 和 1
   val |= ep->next_pid ? USB_BUF_CTRL_DATA1_PID : USB_BUF_CTRL_DATA0_PID;
   ep->next_pid ^= 0x01;
 
-  // 転送開始
+  // 启动传输
   usb_buffer_control_publish(ep->buf_ctrl, val);
 }
 
 void usb_ep_n_start_transfer(uint8_t ep_num, bool in, const uint8_t* buf,
                              uint16_t len) {
+  // 音频 OUT 由中断自动重新准备，主循环不可再次改写控制寄存器。
+  if (ep_num == EP_AUDIO_STREAM_OUT && !in &&
+      ep_out[ep_num].type == USB_ENDPOINT_ISOCHRONOUS) return;
   if (ep_num == 0 && !in) {
     ep_out->next_pid = 1;
   }
@@ -646,6 +655,8 @@ static void usb_ep0_stall() {
 }
 
 static void usb_bus_reset() {
+  audio_rx_enabled = false;
+  ++audio_rx_generation;
   usb_hw->dev_addr_ctrl = device_address = 0;
   should_set_address = false;
   configured = false;
@@ -654,7 +665,7 @@ static void usb_bus_reset() {
     if (interface_handler.set[i]) interface_handler.set[i](0);
   }
 
-  // TODO EPをリセット。今は next_pid だけ
+  // TODO 复位端点，目前仅复位 next_pid
   for (int i = 0; i < USB_NUM_ENDPOINTS; ++i) {
     ep_in[i].next_pid = ep_out[i].next_pid = 0;
   }
@@ -667,20 +678,20 @@ static void handle_ep0(const struct usb_buff_done_t* buff_done) {
     return;
   }
 
-  // TODO 複数パケット転送を EP0 out 以外にも拡張
+  // TODO 将多包传输支持扩展到 EP0 OUT 以外的端点
   if (buff_done->ep_num == 0 && buff_done->in) {
     if (transfer_state_ep0_out.sent_len < transfer_state_ep0_out.total_len) {
-      // 残りがあれば送信
+      // 如果还有剩余数据，则继续发送
       usb_ep0_continue_transfer();
     } else {
       if (transfer_state_ep0_out.total_len != 0 &&
           (transfer_state_ep0_out.total_len % 64) == 0) {
-        // 最後のパケットが 64 byte のときは区切りとして 0 byte を送信
+        // 最后一个数据包为 64 字节时，发送零长度包作为结束标记
         usb_ep0_start_transfer(NULL, 0);
         return;
       }
 
-      // 0バイトのステータスパケットを受信
+      // 接收零长度状态包
       ep_out->next_pid = 1;
       usb_start_transfer(ep_out, false, NULL, 0);
 
@@ -730,6 +741,14 @@ static void call_handler(uint8_t ep_num, bool in, const void* buf,
 }
 
 static void usb_handle_buff_done(const struct usb_buff_done_t* buff_done) {
+  if (buff_done->audio_snapshot) {
+    if (usb_audio_packet_current(&buff_done->audio, audio_rx_enabled,
+                                  audio_rx_generation)) {
+      call_handler(buff_done->ep_num, false, (uint8_t *)buff_done->audio.data,
+                   buff_done->audio.length);
+    }
+    return;
+  }
   struct endpoint_config* ep =
       buff_done->in ? &ep_in[buff_done->ep_num] : &ep_out[buff_done->ep_num];
 
@@ -743,13 +762,27 @@ static void usb_handle_buff_done_isr(uint ep_num, bool in) {
   struct endpoint_config* ep = in ? &ep_in[ep_num] : &ep_out[ep_num];
   uint16_t len = *ep->buf_ctrl & USB_BUF_CTRL_LEN_MASK;
 
-  struct usb_event_t event;
+  static struct usb_event_t event;
   event.type = USB_EVENT_BUFF_DONE;
 
   event.buff_done.ep_num = ep_num;
   event.buff_done.in = in;
   event.buff_done.buf = ep->buf;
   event.buff_done.len = len;
+  event.buff_done.audio_snapshot = false;
+  if (ep_num == EP_AUDIO_STREAM_OUT && !in &&
+      ep->type == USB_ENDPOINT_ISOCHRONOUS) {
+    if (!audio_rx_enabled) return;
+    event.buff_done.audio_snapshot = true;
+    bool captured = usb_audio_packet_capture(&event.buff_done.audio,
+        (const void *)ep->buf, len, audio_rx_generation);
+    // 先保存当前包并开放接收，再交给主循环解包、音量处理和编码。
+    usb_start_transfer(ep, false, NULL, ep->max_packet_size);
+    // 音频积压时丢弃新包并计数，预留队列位置给控制和反馈事件。
+    if (!captured || queue_get_level(&queue) >= USB_QUEUE_LENGTH - 4 ||
+        !queue_try_add(&queue, &event)) ++usb_audio_queue_drops;
+    return;
+  }
   event_put(&event);
 }
 
@@ -770,19 +803,19 @@ static void usb_handle_buff_status_isr() {
 
 // setup
 static void usb_setup_endpoints() {
-  // EP 管理データを初期化
+  // 初始化端点管理数据
   memset(ep_in, 0, sizeof(ep_in));
   memset(ep_out, 0, sizeof(ep_out));
   memset(&transfer_state_ep0_out, 0, sizeof(transfer_state_ep0_out));
   memset(&ep_handler, 0, sizeof(ep_handler));
   memset(&interface_handler, 0, sizeof(interface_handler));
 
-  // EP0 IN を初期化
+  // 初始化 EP0 IN
   ep_in[0].buf = usb_dpram->ep0_buf_a;
   ep_in[0].buf_ctrl = &usb_dpram->ep_buf_ctrl[0].in;
   ep_in[0].max_packet_size = 64;
 
-  // EP0 out を初期化
+  // 初始化 EP0 OUT
   ep_out[0].buf = usb_dpram->ep0_buf_a;
   ep_out[0].buf_ctrl = &usb_dpram->ep_buf_ctrl[0].out;
   ep_out[0].next_pid = 1;
@@ -794,6 +827,11 @@ static void usb_setup_endpoints() {
 static void usb_device_enable_endpoint(uint8_t ep_num, bool in,
                                        uint16_t max_packet_size,
                                        enum endpoint_type_t type) {
+  uint32_t interrupts = save_and_disable_interrupts();
+  if (ep_num == EP_AUDIO_STREAM_OUT && !in) {
+    ++audio_rx_generation;
+    audio_rx_enabled = type == USB_ENDPOINT_ISOCHRONOUS;
+  }
   if (type == USB_ENDPOINT_ISOCHRONOUS) {
     assert(max_packet_size < 1024);
   } else {
@@ -821,15 +859,23 @@ static void usb_device_enable_endpoint(uint8_t ep_num, bool in,
        : &usb_dpram->ep_ctrl[ep_num - 1].out) = reg;
   usb_buffer_control_publish(ep->buf_ctrl,
       max_packet_size | USB_BUF_CTRL_AVAIL | USB_BUF_CTRL_DATA0_PID);
+  restore_interrupts(interrupts);
 }
 
 void usb_device_disable_endpoint(uint8_t ep_num, bool in,
                                  uint16_t max_packet_size,
                                  enum endpoint_type_t type) {
+  uint32_t interrupts = save_and_disable_interrupts();
+  if (ep_num == EP_AUDIO_STREAM_OUT && !in) {
+    audio_rx_enabled = false;
+    ++audio_rx_generation;
+  }
   *(in ? &usb_dpram->ep_ctrl[ep_num - 1].in
        : &usb_dpram->ep_ctrl[ep_num - 1].out) = 0;
   *(in ? &usb_dpram->ep_buf_ctrl[ep_num].in
        : &usb_dpram->ep_buf_ctrl[ep_num].out) &= ~USB_BUF_CTRL_AVAIL;
+  usb_hw_clear->buf_status = 1u << (2 * ep_num + (in ? 0 : 1));
+  restore_interrupts(interrupts);
 }
 
 void usb_device_set_ep_in_handler(uint8_t ep_num, usb_ep_in_handler handler) {
@@ -968,12 +1014,14 @@ static void usb_layout_buffers() {
 
 uint8_t current_config = 0;
 static bool usb_set_configuration(uint8_t config) {
+  audio_rx_enabled = false;
+  ++audio_rx_generation;
   if (config > 1) return false;
   // Closing/reconfiguring USB must also discard the old audio stream.
   for (unsigned i = 0; i < INTERFACE_NUM; ++i) {
     if (interface_handler.set[i]) interface_handler.set[i](0);
   }
-  // 既存のエンドポイントを初期化
+  // 初始化现有端点
   for (int i = 0;
        i < sizeof(usb_dpram->ep_ctrl) / sizeof(usb_dpram->ep_ctrl[0]); ++i) {
     usb_dpram->ep_ctrl[i].in &= ~EP_CTRL_ENABLE_BITS;
@@ -989,17 +1037,17 @@ static bool usb_set_configuration(uint8_t config) {
     return true;
   }
 
-  // TODO 複数 config に対応
+  // TODO 支持多个配置
   assert(config == 1);
-  // config の値に応じて差し替えるべき
+  // 应根据 config 的值切换配置
   void* desc = (void*)&configuration_descriptor;
   uint16_t len = sizeof(configuration_descriptor);
 
-  // EP ごとの最大 packet size を読み取り dpram を割り当て
+  // 读取各端点的最大数据包长度并分配 DPRAM
   walk_descriptor(desc, len, 0xFF, 0xFF, usb_set_max_packet);
   usb_layout_buffers();
 
-  // EP を有効化
+  // 启用端点
   walk_descriptor(desc, len, 0xFF, 0, enable_ep);
   walk_descriptor(desc, len, 0xFF, 0, set_interface);
   configured = true;
@@ -1009,8 +1057,8 @@ static bool usb_set_configuration(uint8_t config) {
 }
 
 static bool usb_set_interface(uint8_t itf, uint8_t alt) {
-  // TODO 複数 config のサポート
-  // 指定の config に差し替える
+  // TODO 支持多个配置
+  // 切换到指定配置
   void* desc = (void*)&configuration_descriptor;
   uint16_t len = sizeof(configuration_descriptor);
 
@@ -1030,7 +1078,7 @@ static bool usb_set_interface(uint8_t itf, uint8_t alt) {
   }
   if (!found) return false;
 
-  // EP を有効化
+  // 启用端点
   walk_descriptor(desc, len, itf, alt_settings[itf], disable_ep);
   walk_descriptor(desc, len, itf, alt, enable_ep);
   alt_settings[itf] = alt;

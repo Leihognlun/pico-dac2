@@ -45,6 +45,6 @@ int main(void) {
   }
   assert(seen == (PICODAC_OUTPUT_SPDIF ? 8 : 4));
   assert(formats == seen - 1 && endpoints == formats * 2);
-  assert(device_descriptor.bcdDevice == 0x0101);
+  assert(device_descriptor.bcdDevice == 0x0103);
   puts("PASS: USB descriptor lengths, topology, formats and endpoints");
 }
