@@ -11,7 +11,7 @@ FIELDS = {
     0: ('underruns', 'dropped_frames', 'silence_blocks'),
     1: ('spdif_stalls', 'i2s_stalls', 'bad_packets'),
     2: ('sample_rate', 'rx_packets', 'rx_frames'),
-    3: ('rx_queue_drops', 'reserved_1', 'reserved_2'),
+    3: ('rx_queue_drops', 'led_mask', 'led_commands'),
 }
 
 
@@ -51,6 +51,8 @@ def main():
             if not ready:
                 continue
             report = os.read(fd, 64)
+            if len(report) == 17 and report[0] == 1:
+                report = report[1:]
             if len(report) != 16 or report[:3] != b'AD\x01' or report[3] not in FIELDS:
                 continue
             page = report[3]
@@ -58,7 +60,7 @@ def main():
             output = []
             for name, value in zip(FIELDS[page], values):
                 delta = ''
-                if name in previous and name != 'sample_rate':
+                if name in previous and name not in ('sample_rate', 'led_mask'):
                     delta = f' (+{(value - previous[name]) & 0xffffffff})'
                 previous[name] = value
                 output.append(f'{name}={value}{delta}')

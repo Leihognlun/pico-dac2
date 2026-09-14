@@ -14,6 +14,8 @@
 #include "hardware/sync.h"
 // TODO 改为支持外部配置
 #include "usb_descriptor.h"
+#include "usb_hid.h"
+#include "usb_control_state.h"
 
 #ifndef USB_QUEUE_LENGTH
 #define USB_QUEUE_LENGTH 16
@@ -49,6 +51,7 @@ enum {
 };
 
 struct usb_buff_done_t {
+  uint32_t control_generation;
   uint8_t ep_num;
   bool in;
   volatile void* buf;
@@ -71,6 +74,8 @@ static volatile bool configured = false;
 static uint8_t alt_settings[MUSB_MAX_INTERFACES];
 static volatile bool audio_rx_enabled;
 static volatile uint32_t audio_rx_generation;
+static volatile uint32_t control_generation;
+static usb_control_state_t control_state;
 volatile uint32_t usb_audio_queue_drops;
 
 #define usb_hw_set hw_set_alias(usb_hw)
@@ -142,6 +147,13 @@ static void isr_usbctrl_handler() {
   static struct usb_event_t event;
 
   if (status & USB_INTS_SETUP_REQ_BITS) {
+    // A new SETUP aborts both directions of the previous control transfer.
+    // Drop old EP0 completions before tagging events for this transaction.
+    ++control_generation;
+    usb_dpram->ep_buf_ctrl[0].in = 0;
+    usb_dpram->ep_buf_ctrl[0].out = 0;
+    usb_hw_clear->buf_status = 3u;
+    usb_hw->ep_stall_arm = 0;
     handled |= USB_INTS_SETUP_REQ_BITS;
     usb_hw_clear->sie_status = USB_SIE_STATUS_SETUP_REC_BITS;
     event.type = USB_EVENT_TYPE_SETUP_PACKET;
@@ -290,7 +302,7 @@ static inline void debug_print_setup(const struct usb_setup_packet_t* pkt) {
 static bool usb_set_configuration(uint8_t config);
 static bool usb_set_interface(uint8_t itf, uint8_t alt);
 static void usb_ep0_out_ack();
-static void usb_reset_next_id(uint8_t ep_num);
+static void usb_clear_endpoint_halt(uint8_t address);
 
 static struct usb_setup_packet_t last_packet;
 typedef bool (*in_callback)(const struct usb_setup_packet_t* pkt);
@@ -446,12 +458,11 @@ static void usb_handle_standard_request(const struct usb_setup_packet_t* pkt) {
       }
       break;
     case USB_REQ_RECIPIENT_ENDPOINT:
-      if (pkt->bRequest == 0x01 && pkt->wIndex == 0x82) {
-        // TODO
-        usb_reset_next_id(2);
-        static uint8_t zero[16] = {0};
-        usb_ep_n_start_transfer(2, true, zero, 16);
-        usb_ep_n_start_transfer(2, false, zero, 16);
+      if (configured && pkt->bmRequestType == 0x02 &&
+          pkt->bRequest == 0x01 && pkt->wValue == 0 && pkt->wLength == 0 &&
+          (pkt->wIndex == EP_HID_IN || pkt->wIndex == EP_HID_OUT)) {
+        // CLEAR_FEATURE(ENDPOINT_HALT) applies to exactly one direction.
+        usb_clear_endpoint_halt((uint8_t)pkt->wIndex);
         usb_ep0_out_ack();
       } else {
         usb_ep0_stall();
@@ -509,6 +520,7 @@ static void usb_handle_custom_request(const struct usb_setup_packet_t* pkt) {
 }
 
 void usb_handle_setup_packet(const struct usb_setup_packet_t* pkt) {
+  usb_control_begin(&control_state, pkt->bmRequestType, pkt->wLength);
   uint8_t type = pkt->bmRequestType & USB_REQ_TYPE_MASK;
 
   // debug_print_setup(pkt);
@@ -577,8 +589,12 @@ struct endpoint_config {
 struct endpoint_config ep_in[16];
 struct endpoint_config ep_out[16];
 
-static void usb_reset_next_id(uint8_t ep_num) {
-  ep_in[ep_num].next_pid = ep_out[ep_num].next_pid = 0;
+static void usb_clear_endpoint_halt(uint8_t address) {
+  struct endpoint_config *ep = (address & 0x80)
+      ? &ep_in[address & 0x0F] : &ep_out[address & 0x0F];
+  uint32_t interrupts = save_and_disable_interrupts();
+  usb_buffer_control_clear_halt(ep->buf_ctrl, &ep->next_pid);
+  restore_interrupts(interrupts);
 }
 
 static void usb_start_transfer(struct endpoint_config* ep, bool in,
@@ -637,6 +653,7 @@ static void usb_ep0_continue_transfer() {
 }
 
 void usb_ep0_start_transfer(const uint8_t* buf, uint16_t len) {
+  usb_control_response(&control_state, len);
   transfer_state_ep0_out.data = buf;
   transfer_state_ep0_out.total_len = len;
   transfer_state_ep0_out.sent_len = 0;
@@ -662,6 +679,9 @@ static void usb_bus_reset() {
   configured = false;
   memset(alt_settings, 0, sizeof(alt_settings));
   for (unsigned i = 0; i < INTERFACE_NUM; ++i) {
+#if HID_ENABLE
+    if (i == INTERFACE_HID) { usb_hid_reset(); continue; }
+#endif
     if (interface_handler.set[i]) interface_handler.set[i](0);
   }
 
@@ -680,12 +700,14 @@ static void handle_ep0(const struct usb_buff_done_t* buff_done) {
 
   // TODO 将多包传输支持扩展到 EP0 OUT 以外的端点
   if (buff_done->ep_num == 0 && buff_done->in) {
+    // An IN ZLP after SET_REPORT is the final status, not an IN data stage.
+    // Arming another OUT ZLP here can overwrite the next SET_REPORT receive.
+    if (!control_state.read) return;
     if (transfer_state_ep0_out.sent_len < transfer_state_ep0_out.total_len) {
       // 如果还有剩余数据，则继续发送
       usb_ep0_continue_transfer();
     } else {
-      if (transfer_state_ep0_out.total_len != 0 &&
-          (transfer_state_ep0_out.total_len % 64) == 0) {
+      if (control_state.need_zlp) {
         // 最后一个数据包为 64 字节时，发送零长度包作为结束标记
         usb_ep0_start_transfer(NULL, 0);
         return;
@@ -741,6 +763,8 @@ static void call_handler(uint8_t ep_num, bool in, const void* buf,
 }
 
 static void usb_handle_buff_done(const struct usb_buff_done_t* buff_done) {
+  if (buff_done->ep_num == 0 &&
+      buff_done->control_generation != control_generation) return;
   if (buff_done->audio_snapshot) {
     if (usb_audio_packet_current(&buff_done->audio, audio_rx_enabled,
                                   audio_rx_generation)) {
@@ -766,6 +790,7 @@ static void usb_handle_buff_done_isr(uint ep_num, bool in) {
   event.type = USB_EVENT_BUFF_DONE;
 
   event.buff_done.ep_num = ep_num;
+  event.buff_done.control_generation = control_generation;
   event.buff_done.in = in;
   event.buff_done.buf = ep->buf;
   event.buff_done.len = len;
@@ -957,13 +982,6 @@ static void change_ep(const struct usb_interface_descriptor_t* itf,
   func(addr, in, edp->wMaxPacketSize, type);
 }
 
-static void set_interface(const struct usb_interface_descriptor_t* itf,
-                          const struct usb_endpoint_descriptor_t* edp) {
-  assert(itf->bInterfaceNumber < MUSB_MAX_INTERFACES);
-  assert(interface_handler.set[itf->bInterfaceNumber]);
-  interface_handler.set[itf->bInterfaceNumber](0);
-}
-
 static void enable_ep(const struct usb_interface_descriptor_t* itf,
                       const struct usb_endpoint_descriptor_t* edp) {
   change_ep(itf, edp, usb_device_enable_endpoint);
@@ -1019,6 +1037,9 @@ static bool usb_set_configuration(uint8_t config) {
   if (config > 1) return false;
   // Closing/reconfiguring USB must also discard the old audio stream.
   for (unsigned i = 0; i < INTERFACE_NUM; ++i) {
+#if HID_ENABLE
+    if (i == INTERFACE_HID) { usb_hid_reset(); continue; }
+#endif
     if (interface_handler.set[i]) interface_handler.set[i](0);
   }
   // 初始化现有端点
@@ -1049,7 +1070,12 @@ static bool usb_set_configuration(uint8_t config) {
 
   // 启用端点
   walk_descriptor(desc, len, 0xFF, 0, enable_ep);
-  walk_descriptor(desc, len, 0xFF, 0, set_interface);
+  // Initialize each interface once, AFTER enabling all endpoints. Walking
+  // endpoints here called HID twice (IN + OUT), overwriting the armed DATA0
+  // receive with DATA1 before the host had sent its first LED command.
+  for (unsigned i = 0; i < INTERFACE_NUM; ++i) {
+    if (interface_handler.set[i]) interface_handler.set[i](0);
+  }
   configured = true;
   current_config = config;
 

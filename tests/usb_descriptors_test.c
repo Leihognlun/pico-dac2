@@ -4,6 +4,42 @@
 #include "usb_descriptor.h"
 
 int main(void) {
+#if HID_ENABLE
+  unsigned id = 0, bits = 0, count = 0, page = 0, usage = 0;
+  unsigned input_bits[5] = {0}, output_bits[5] = {0}, feature_bits[5] = {0}, media_usages = 0;
+  for (size_t offset = 0; offset < sizeof(report_descriptor);) {
+    uint8_t tag = report_descriptor[offset++];
+    unsigned length = (tag & 3) == 3 ? 4 : tag & 3;
+    assert(offset + length <= sizeof(report_descriptor));
+    uint32_t value = 0;
+    for (unsigned i = 0; i < length; ++i)
+      value |= (uint32_t)report_descriptor[offset++] << (8 * i);
+    switch (tag & 0xFC) {
+      case 0x04: page = value; break;
+      case 0x08:
+        usage = value;
+        if (page == 0x0C && id == HID_REPORT_MEDIA) {
+          if (usage == 0xCD) media_usages |= 1;
+          if (usage == 0xE9) media_usages |= 2;
+          if (usage == 0xEA) media_usages |= 4;
+        }
+        break;
+      case 0x84: id = value; assert(id > 0 && id < 5); break;
+      case 0x74: bits = value; break;
+      case 0x94: count = value; break;
+      case 0x80: input_bits[id] += bits * count; break;
+      case 0x90: output_bits[id] += bits * count; break;
+      case 0xB0: feature_bits[id] += bits * count; break;
+    }
+  }
+  assert(input_bits[1] == 128 && input_bits[2] == 8 && input_bits[3] == 0);
+  assert(output_bits[1] == 0 && output_bits[2] == 0 && output_bits[3] == 8);
+  assert(media_usages == 7);
+  assert(feature_bits[4] == 40);
+  assert(configuration_descriptor.hid.hid_in_descriptor.wMaxPacketSize == 17);
+  assert(configuration_descriptor.hid.hid_out_descriptor.wMaxPacketSize == 2);
+  assert(configuration_descriptor.hid.hid_in_descriptor.bInterval == 10);
+#endif
   const uint8_t *base = (const void *)&configuration_descriptor;
   size_t size = sizeof(configuration_descriptor);
   assert(configuration_descriptor.config.wTotalLength == size);
@@ -45,6 +81,6 @@ int main(void) {
   }
   assert(seen == (PICODAC_OUTPUT_SPDIF ? 8 : 4));
   assert(formats == seen - 1 && endpoints == formats * 2);
-  assert(device_descriptor.bcdDevice == 0x0103);
+  assert(device_descriptor.bcdDevice == 0x0108);
   puts("PASS: USB descriptor lengths, topology, formats and endpoints");
 }

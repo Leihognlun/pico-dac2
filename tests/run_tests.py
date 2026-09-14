@@ -14,12 +14,14 @@ def main():
     build = root / "build" / "host-tests"
     build.mkdir(parents=True, exist_ok=True)
     subprocess.run([sys.executable, str(root / "tests/i2s_pio_test.py")], check=True)
+    subprocess.run([sys.executable, str(root / "tests/media_controls_test.py")], check=True)
     common = [args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", str(root)]
     cases = [
+        ("usb_control_state", [], ["tests/usb_control_state_test.c"]),
         ("usb_audio_packet", [], ["tests/usb_audio_packet_test.c"]),
-        ("diagnostics_spdif", ["-DHID_ENABLE=1", "-DPICODAC_OUTPUT_SPDIF=1", "-DLOG_LEVEL=0"],
+        ("diagnostics_spdif", ["-I", str(root / "tests/stubs"), "-DHID_ENABLE=1", "-DPICODAC_OUTPUT_SPDIF=1", "-DLOG_LEVEL=0"],
          ["tests/audio_diagnostics_test.c", "usb_hid.c"]),
-        ("diagnostics_i2s", ["-DHID_ENABLE=1", "-DPICODAC_OUTPUT_SPDIF=0", "-DLOG_LEVEL=0"],
+        ("diagnostics_i2s", ["-I", str(root / "tests/stubs"), "-DHID_ENABLE=1", "-DPICODAC_OUTPUT_SPDIF=0", "-DLOG_LEVEL=0"],
          ["tests/audio_diagnostics_test.c", "usb_hid.c"]),
         ("usb_buffer_control", ["-I", str(root / "tests/stubs")],
          ["tests/usb_buffer_control_test.c"]),

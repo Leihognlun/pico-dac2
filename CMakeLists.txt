@@ -36,6 +36,18 @@ endif()
 set (PICODAC_VENDOR_ID 0xcafe CACHE STRING "USB Vendor ID")
 set (PICODAC_PRODUCT_ID 0xbabe CACHE STRING "USB Product ID")
 
+# Media buttons and host-controlled LEDs reserve these GPIOs.
+math(EXPR PICODAC_I2S_LRCLK_PIN "${PICODAC_I2S_BASE_CLOCK_PIN} + 1")
+foreach(control_pin 9 10 12 13 26 27)
+    if((NOT PICODAC_OUTPUT STREQUAL "I2S" AND PICODAC_SPDIF_PIN EQUAL control_pin) OR
+       (NOT PICODAC_OUTPUT STREQUAL "SPDIF" AND
+        (PICODAC_I2S_DATA_PIN EQUAL control_pin OR
+         PICODAC_I2S_BASE_CLOCK_PIN EQUAL control_pin OR
+         PICODAC_I2S_LRCLK_PIN EQUAL control_pin)))
+        message(FATAL_ERROR "Audio GPIO ${control_pin} conflicts with media buttons/LEDs")
+    endif()
+endforeach()
+
 
 
 

@@ -27,5 +27,25 @@ int main(void) {
   unsigned before = waits;
   usb_buffer_control_publish(&control, 0);
   assert(control == 0 && waits == before);
+  // Clear IN halt between LED writes: OUT must retain its DATA1 expectation.
+  volatile uint32_t out_control = 2 | USB_BUF_CTRL_AVAIL | USB_BUF_CTRL_DATA1_PID;
+  uint8_t out_pid = 0, in_pid = 0;
+  control = 17 | 0x8000 | USB_BUF_CTRL_AVAIL | USB_BUF_CTRL_DATA1_PID | USB_BUF_CTRL_STALL;
+  expected_metadata = 17 | 0x8000;
+  usb_buffer_control_clear_halt(&control, &in_pid);
+  assert(control == (expected_metadata | USB_BUF_CTRL_AVAIL) && in_pid == 1);
+  assert(out_control == (2 | USB_BUF_CTRL_AVAIL | USB_BUF_CTRL_DATA1_PID));
+  assert(out_pid == 0);
+  // OUT clear preserves the armed two-byte receive, using DATA0 then DATA1.
+  control = out_control | USB_BUF_CTRL_STALL;
+  expected_metadata = 2;
+  usb_buffer_control_clear_halt(&control, &out_pid);
+  assert(control == (2 | USB_BUF_CTRL_AVAIL) && out_pid == 1);
+  // A completed packet must not be submitted again; the callback arms DATA0.
+  control = 2 | USB_BUF_CTRL_DATA1_PID | USB_BUF_CTRL_STALL;
+  before = waits;
+  usb_buffer_control_clear_halt(&control, &out_pid);
+  assert(control == 2 && out_pid == 0 && waits == before);
+  puts("PASS: directional halt clear preserves pending packets and restarts DATA0");
   puts("PASS: USB buffer metadata published before AVAILABLE");
 }

@@ -11,6 +11,7 @@ static const uint8_t report_descriptor[] = {
     0x09, 0x01,        // USAGE (0x01)
     // Collection
     0xA1, 0x01,  // COLLECTION (Application)
+    0x85, HID_REPORT_DIAGNOSTICS,
     // Input Report (16byte)
     0x09, 0x02,        // USAGE (0x02)
     0x15, 0x00,        // LOGICAL_MINIMUM(0)
@@ -19,16 +20,33 @@ static const uint8_t report_descriptor[] = {
     0x95, 0x10,        // REPORT_COUNT(16byte)
     0x81, 0x02,        // INPUT(Data,Var,Abs)
 
-    // Output Report (16byte)
+    // Output Report: LED mask, bits 0..2 = GPIO 9, 12, 26.
+    0x85, HID_REPORT_LEDS,
     0x09, 0x03,        // USAGE (0x03)
     0x15, 0x00,        // LOGICAL_MINIMUM(0)
     0x26, 0xFF, 0x00,  // LOGICAL_MAXIMUM(255)
     0x75, 0x08,        // REPORT_SIZE(8bit)
-    0x95, 0x10,        // REPORT_COUNT(16byte)
+    0x95, 0x01,        // REPORT_COUNT(1byte)
     0x91, 0x02,        // OUTPUT(Data,Var,Abs)
+    // EP0 LED control/readback: mask + little-endian accepted-command count.
+    0x85, HID_REPORT_LED_FEATURE,
+    0x09, 0x04,
+    0x95, 0x05,
+    0xB1, 0x02,        // FEATURE(Data,Var,Abs)
 
     // End Collection
     0xC0,  // END_COLLECTION
+    0x05, 0x0C,        // Consumer usage page
+    0x09, 0x01,        // Consumer Control
+    0xA1, 0x01,
+    0x85, HID_REPORT_MEDIA,
+    0x15, 0x00, 0x25, 0x01,
+    0x09, 0xCD,        // Play/Pause
+    0x09, 0xE9,        // Volume Increment
+    0x09, 0xEA,        // Volume Decrement
+    0x75, 0x01, 0x95, 0x03, 0x81, 0x02,
+    0x75, 0x05, 0x95, 0x01, 0x81, 0x03, // Padding
+    0xC0,
 };
 #endif
 
@@ -42,7 +60,7 @@ static const struct usb_device_descriptor device_descriptor = {
     .bMaxPacketSize0 = 64,    // Max packet size for ep0
     .idVendor = VENDOR_ID,    // Your vendor id
     .idProduct = PRODUCT_ID,  // Your product ID
-    .bcdDevice = 0x0103,      // 1.03: interrupt-driven audio RX rearm
+    .bcdDevice = 0x0108,      // 1.08: control status direction and SETUP cancellation
     .iManufacturer = 0,       // Manufacturer string index
     .iProduct = 0,            // Product string index
     .iSerialNumber = 0,       // No serial number
@@ -552,7 +570,7 @@ struct configuration_descriptor {
                     .bDescriptorType = USB_DT_ENDPOINT,
                     .bEndpointAddress = EP_HID_IN,  // EP2 IN
                     .bmAttributes = 0x03,           // Interrupt
-                    .wMaxPacketSize = 0x10,         // 16byte
+                    .wMaxPacketSize = HID_IN_PACKET_SIZE,
                     .bInterval = HID_INTERVAL_MS,   // TODO 10ms
                 },
             .hid_out_descriptor =
@@ -561,7 +579,7 @@ struct configuration_descriptor {
                     .bDescriptorType = USB_DT_ENDPOINT,
                     .bEndpointAddress = EP_HID_OUT,  // EP2 OUT
                     .bmAttributes = 0x03,            // Interrupt
-                    .wMaxPacketSize = 0x10,          // 16byte
+                    .wMaxPacketSize = HID_OUT_PACKET_SIZE,
                     .bInterval = HID_INTERVAL_MS,    // TODO 10ms
                 },
         },
