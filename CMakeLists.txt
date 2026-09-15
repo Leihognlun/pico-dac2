@@ -12,7 +12,7 @@ set(BOARD_NAME "rp2040" CACHE STRING "Target board name")
 # user configurations
 set(PICODAC_OUTPUT "BOTH" CACHE STRING "Audio output: BOTH, SPDIF or I2S")
 set_property(CACHE PICODAC_OUTPUT PROPERTY STRINGS BOTH SPDIF I2S)
-option(PICODAC_EAC3_PASSTHROUGH "Experimental 192 kHz S16 IEC61937 carrier for E-AC-3" OFF)
+option(PICODAC_EAC3_PASSTHROUGH "192 kHz S16 IEC61937 carrier for E-AC-3" ON)
 if(PICODAC_EAC3_PASSTHROUGH AND PICODAC_OUTPUT STREQUAL "I2S")
     message(FATAL_ERROR "E-AC-3 passthrough requires SPDIF or BOTH output")
 endif()
@@ -136,7 +136,7 @@ endif()
     )
 
     pico_set_program_name(mdac_adc2 "mdac_adc2")
-    pico_set_program_version(mdac_adc2 "0.1")
+    pico_set_program_version(mdac_adc2 "0.2.0")
 
     # pico_set_binary_type(mdac_adc2 no_flash)
 

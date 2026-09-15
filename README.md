@@ -18,6 +18,10 @@ This project provides firmware to enable the Raspberry Pi Pico as a USB DAC (Dig
   volume/mute and is transmitted with Non-PCM channel status. Requires a
   passthrough-capable player and an AC-3/DTS receiver; this firmware does not
   encode multichannel PCM. See [setup and limitations](SPDIF.md#dolby-digital--dts-透传).
+- **E-AC-3 / Dolby Atmos passthrough:** E-AC-3 over S/PDIF is enabled by
+  default and can be disabled with `PICODAC_EAC3_PASSTHROUGH=OFF`. E-AC-3
+  Dolby Atmos playback has been validated on a compatible soundbar. See
+  [E-AC-3 setup and validation](EAC3.md).
 - **USB Audio Class 2.0 Compliant:**
   - Works on many operating systems (Windows, macOS, Linux) without requiring driver installation.
   - Supports flow control via the Feedback Endpoint.

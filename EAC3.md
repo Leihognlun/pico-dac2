@@ -1,9 +1,10 @@
 # E-AC-3 / Dolby Digital Plus 实验透传（1.10）
 
-这是基于当前 1.08 音频/HID 代码的可选构建。默认 OFF；普通固件仍为 1.08。
+这是正式版 v0.2.0 的默认功能，可通过 `PICODAC_EAC3_PASSTHROUGH=OFF` 关闭。
 目标是原样传送 **48 kHz E-AC-3（包括 JOC/Atmos 元数据）** 的 IEC 61937 载波。
 Pico 不解码、不重新编码、不生成 Atmos；接收端必须能解码该码流。
-当前验证为主机端数据路径测试和固件编译，尚未完成 CM4 → Pico → 接收机实测。
+除主机端数据路径测试和固件编译外，已完成 CM4 → Pico → 条形音响实测，
+E-AC-3 杜比 Atmos 音频能够正常播放。
 
 ## 四份 UAC3 规范给出的依据
 
@@ -108,7 +109,7 @@ aplay -D hw:2,0 -t raw -f S16_LE -c 2 -r 192000 eac3.spdif
 `python tests/run_tests.py` 增加了默认/实验描述符、独立时钟范围/只读性、
 普通时钟拒绝 192 kHz、192 kHz channel status、完整两次 burst 跨包逐字节保持、
 音量/静音绕过、超长包拒绝及返回 PCM 的测试。burst 测试使用合成载荷，验证传输保真，
-不代表已用真实 JOC 音轨和 Atmos 接收机验证。192 kHz 实际 DMA/PIO 时序仍需硬件测试。
+同时已使用真实 E-AC-3 杜比 Atmos 音轨和兼容条形音响完成播放验证。
 
 完整 UAC3 迁移还需要 High Capability/Cluster/Power Domain 等描述符和相应控制请求；
 不能把 D21 写入现有 UAC2 bmFormats 来代替这些工作。
