@@ -136,7 +136,7 @@ endif()
     )
 
     pico_set_program_name(mdac_adc2 "mdac_adc2")
-    pico_set_program_version(mdac_adc2 "0.2.0")
+    pico_set_program_version(mdac_adc2 "0.2.1")
 
     # pico_set_binary_type(mdac_adc2 no_flash)
 

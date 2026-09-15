@@ -49,12 +49,13 @@ USB 限制参考：[USB 2.0 规范](https://www.usb.org/document-library/usb-20-
 
 ## 固件结构
 
-- `PICODAC_EAC3_PASSTHROUGH=ON` 使 USB bcdDevice 为 0x0110。
-- AS interface 1 的 alt 8：2ch / S16_LE，最大包 772，异步反馈，固定 192000 Hz。
-- alt 8 使用独立只读逻辑 Clock ID 5；Input ID 6 直接连接 SPDIF Output ID 7，
-  不经过 Feature Unit。它与普通时钟共用物理输出，但同一 AS 接口只能激活一个 alt。
-- 原 PCM/AC-3/DTS alt 1..7 仍使用 Clock ID 4，原采样率列表最高 96000。
-  设置普通时钟不会改变正在播放的 E-AC-3；离开 alt 8 恢复普通时钟。
+- `PICODAC_EAC3_PASSTHROUGH=ON` 使 USB bcdDevice 为 0x0111，避免 Windows 沿用
+  v0.2.0（0x0110）失败枚举留下的设备缓存。
+- AS interface 1 的 alt 8：2ch / S16_LE，最大包 772，异步反馈，192000 Hz 载波。
+- 参考 CM6646 的单拓扑方式，alt 1..8 全部链接 Input Terminal ID 1，并共用
+  Clock Source ID 4；时钟范围增加 192000 Hz。Windows `usbaudio2.sys` 要求同一个
+  AudioStreaming 接口的所有 alternate setting 使用相同 `bTerminalLink`，且只支持
+  一个 Clock Source。旧版独立 Clock/Terminal 会导致 Windows Code 10。
 - 环形缓冲容量扩至 192 kHz 下 16 ms（24,576 字节）；USB 包快照原有 776 字节容量足够。
 - SPDIF channel status 为 non-PCM、192 kHz；保留每个载波字。USB 音量、静音不作用于载波。
 - BOTH 模式的 I2S 发送零样本并维持时钟，避免把压缩数据送进模拟 DAC。
@@ -70,7 +71,7 @@ cmake --build build/eac3
 ```
 
 实验固件：`build/eac3/mdac_adc2.uf2`。普通固件：`build/mdac_adc2.uf2`。
-烧录实验固件后重新插拔，`lsusb -v -d cafe:babe` 应显示 bcdDevice 1.10，
+烧录固件后重新插拔，`lsusb -v -d cafe:babe` 应显示 bcdDevice 1.11，
 alt 8 的两个格式类型字段均为 Type III，bmFormats 为 0x00000381。
 
 ## CM4 实测步骤

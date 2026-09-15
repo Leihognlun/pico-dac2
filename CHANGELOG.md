@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.1 - 2026-09-15
+
+- Use one shared UAC2 Clock Source and Input Terminal for every AudioStreaming
+  alternate setting, matching the CM6646-style topology.
+- Add 192 kHz to the shared clock range for the E-AC-3 IEC 61937 carrier.
+- Fix Windows `usbaudio2.sys` startup failure (Device Manager Code 10) while
+  retaining Linux E-AC-3 Dolby Atmos passthrough.
+
 ## v0.2.0 - 2026-09-15
 
 - Add E-AC-3 passthrough over S/PDIF for Dolby Atmos playback on compatible

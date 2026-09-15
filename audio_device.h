@@ -8,7 +8,11 @@
 #if defined(__RX__)
 static const uint32_t SAMPLE_RATES[] = {44100, 48000};
 #else
-static const uint32_t SAMPLE_RATES[] = {44100, 48000, 88200, 96000};
+static const uint32_t SAMPLE_RATES[] = {44100, 48000, 88200, 96000
+#if PICODAC_EAC3_PASSTHROUGH
+                                       , 192000
+#endif
+};
 #endif
 
 #define N_SAMPLE_RATES (sizeof(SAMPLE_RATES) / sizeof(SAMPLE_RATES[0]))

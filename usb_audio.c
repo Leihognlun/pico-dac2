@@ -18,9 +18,6 @@ typedef enum {
 
 static usb_sample_format_t g_format = USB_SAMPLE_FORMAT_16;
 static uint8_t audio_stream_current_alt = 0;
-#if PICODAC_EAC3_PASSTHROUGH
-static uint32_t normal_clock_rate = 48000;
-#endif
 volatile uint32_t usb_audio_bad_packets;
 volatile uint32_t usb_audio_rx_packets;
 volatile uint32_t usb_audio_rx_frames;
@@ -129,8 +126,7 @@ bool usb_audio_stream_set_interface(uint8_t alt) {
   audio_device_stream_stop();
 
 #if PICODAC_EAC3_PASSTHROUGH
-  // Separate logical clocks prevent high-rate PCM from appearing on alt 1..3.
-  audio_device_set_sampling_freq(alt == AUDIO_ALT_EAC3 ? AUDIO_EAC3_RATE : normal_clock_rate);
+  if (alt == AUDIO_ALT_EAC3) audio_device_set_sampling_freq(AUDIO_EAC3_RATE);
 #endif
 
   if (alt == 1) {
@@ -174,43 +170,13 @@ bool usb_audio_control_in_request(const struct usb_setup_packet_t* pkt) {
     return false;
   }
 
-#if PICODAC_EAC3_PASSTHROUGH
-  if (pkt->bmRequestType == 0xA1 && pkt->wIndex ==
-      ((AUDIO_CONTROL_ID_EAC3_CLOCK << 8) | INTERFACE_AUDIO_CONTROL)) {
-    if (pkt->bRequest == UAC2_CS_REQ_CUR && pkt->wValue == 0x100) {
-      static const uint32_t rate = AUDIO_EAC3_RATE;
-      usb_ep0_start_transfer((const uint8_t *)&rate, MIN(pkt->wLength, sizeof(rate)));
-      return true;
-    }
-    if (pkt->bRequest == UAC2_CS_REQ_CUR && pkt->wValue == 0x200) {
-      static const uint8_t valid = 1;
-      usb_ep0_start_transfer(&valid, MIN(pkt->wLength, 1));
-      return true;
-    }
-    if (pkt->bRequest == UAC2_CS_REQ_RANGE && pkt->wValue == 0x100) {
-      static const struct __attribute__((packed)) {
-        uint16_t count;
-        uint32_t min, max, resolution;
-      } range = {1, AUDIO_EAC3_RATE, AUDIO_EAC3_RATE, 0};
-      usb_ep0_start_transfer((const uint8_t *)&range, MIN(pkt->wLength, sizeof(range)));
-      return true;
-    }
-    return false;
-  }
-#endif
-
   if (pkt->bRequest == UAC2_CS_REQ_CUR) {
     if ((pkt->wIndex >> 8) == AUDIO_CONTROL_ID_CLOCK &&
         (pkt->wValue >> 8) == UAC2_CS_SAM_FREQ_CONTROL &&
         (pkt->wValue & 0xFF) == 0) {
       // GET CUR (Sampling Frequency)
       static uint8_t response[4];
-      const uint32_t freq =
-#if PICODAC_EAC3_PASSTHROUGH
-          normal_clock_rate;
-#else
-          audio_device_get_sampling_freq();
-#endif
+      const uint32_t freq = audio_device_get_sampling_freq();
 
       response[0] = (uint8_t)freq;
       response[1] = (uint8_t)(freq >> 8);
@@ -273,11 +239,16 @@ bool usb_audio_control_in_request(const struct usb_setup_packet_t* pkt) {
           uint32_t dMIN;
           uint32_t dMAX;
           uint32_t dRES;
-        } subranges[4];
+        } subranges[5];
       } __attribute__((packed));
 
       static struct range4b ret = {
-          .wNumSubRages = 4,
+          .wNumSubRages =
+#if PICODAC_EAC3_PASSTHROUGH
+              5,
+#else
+              4,
+#endif
           .subranges[0] =
               {
                   .dMIN = 44100,
@@ -302,6 +273,14 @@ bool usb_audio_control_in_request(const struct usb_setup_packet_t* pkt) {
                   .dMAX = 96000,
                   .dRES = 0,
               },
+#if PICODAC_EAC3_PASSTHROUGH
+          .subranges[4] =
+              {
+                  .dMIN = AUDIO_EAC3_RATE,
+                  .dMAX = AUDIO_EAC3_RATE,
+                  .dRES = 0,
+              },
+#endif
       };
       usb_ep0_start_transfer((void*)&ret, MIN(pkt->wLength, sizeof(ret)));
       return true;
@@ -327,11 +306,7 @@ bool usb_audio_control_ouot_request(const struct usb_setup_packet_t* pkt,
       if (freq == SAMPLE_RATES[i]) supported = true;
     }
     if (!supported) return false;
-#if PICODAC_EAC3_PASSTHROUGH
-    normal_clock_rate = freq;
-    if (audio_stream_current_alt != AUDIO_ALT_EAC3)
-#endif
-      audio_device_set_sampling_freq(freq);
+    audio_device_set_sampling_freq(freq);
     return true;
   } else if (pkt->bmRequestType == 0x21 && pkt->bRequest == UAC2_CS_REQ_CUR &&
              (pkt->wValue >> 8) == UAC2_FU_MUTE_CONTROL &&

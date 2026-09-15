@@ -55,7 +55,9 @@ int main(void) {
       if (alt >= 0) { assert(alt == (int)seen++); assert(d[4] == (alt ? 2 : 0)); }
     } else if (alt > 0 && d[1] == USB_DT_CS_INTERFACE) {
       if (d[2] == 1) {
-        assert(d[0] == 16 && d[3] == (alt == 8 ? AUDIO_CONTROL_ID_EAC3_INPUT : AUDIO_CONTROL_ID_INPUT));
+        // Windows usbaudio2.sys requires one TerminalLink for every alternate
+        // setting of the same AudioStreaming interface.
+        assert(d[0] == 16 && d[3] == AUDIO_CONTROL_ID_INPUT);
         assert(d[5] == (alt >= 4 ? 3 : 1));
         uint32_t mask = d[6] | (d[7] << 8) | (d[8] << 16) | ((uint32_t)d[9] << 24);
         const uint32_t expected[] = {1, 1, 1, 1, 1, 128, 256, 512, 0x381};
@@ -81,13 +83,9 @@ int main(void) {
   }
   assert(seen == (PICODAC_EAC3_PASSTHROUGH ? 9 : PICODAC_OUTPUT_SPDIF ? 8 : 4));
   assert(formats == seen - 1 && endpoints == formats * 2);
-  assert(device_descriptor.bcdDevice == (PICODAC_EAC3_PASSTHROUGH ? 0x0110 : 0x0108));
+  assert(device_descriptor.bcdDevice == (PICODAC_EAC3_PASSTHROUGH ? 0x0111 : 0x0108));
 #if PICODAC_EAC3_PASSTHROUGH
-  assert(configuration_descriptor.ac.eac3_clock.bClockID == 5);
-  assert(configuration_descriptor.ac.eac3_clock.bmControls == 5);
-  assert(configuration_descriptor.ac.eac3_input.bCSourceID == 5);
-  assert(configuration_descriptor.ac.eac3_output.bCSourceID == 5);
-  assert(configuration_descriptor.ac.eac3_output.bSourceID == 6);
+  // Windows' in-box UAC2 driver supports a single clock source.
   assert(configuration_descriptor.ac.cs_ac_clock_source.bClockID == 4);
   assert(configuration_descriptor.ac.cs_ac_interface.wTotalLength ==
          sizeof(struct ac) - sizeof(usb_standard_ac_interface_descriptor));

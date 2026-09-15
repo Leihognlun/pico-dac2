@@ -115,29 +115,27 @@ static uint32_t le32(const uint8_t *p) {
   return p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 static void check_eac3(void) {
-  struct usb_setup_packet_t req = {0xA1, 2, 0x100, 0x500, 64};
+  struct usb_setup_packet_t req = {0xA1, 2, 0x100, 0x400, 64};
   assert(control_in(&req));
-  assert(control_length == 14 && control_reply[0] == 1);
-  assert(le32(control_reply + 2) == 192000 && le32(control_reply + 6) == 192000);
-  req.bRequest = 1; req.wValue = 0x200;
-  assert(control_in(&req) && control_length == 1 && control_reply[0] == 1);
-  req.wValue = 0x100;
-  assert(control_in(&req) && le32(control_reply) == 192000);
+  assert(control_length == 62 && control_reply[0] == 5);
+  assert(le32(control_reply + 50) == 192000 && le32(control_reply + 54) == 192000);
+  req.bRequest = 1;
+  assert(control_in(&req) && le32(control_reply) == 48000);
   req.bmRequestType = 0x21; req.wLength = 4;
   uint8_t clock_bytes[] = {0, 0xee, 2, 0};
-  assert(!control_out(&req, clock_bytes, 4)); // fixed clock is read-only
-  req.wIndex = 0x400;
-  assert(!control_out(&req, clock_bytes, 4)); // PCM clock cannot accept 192k
+  assert(control_out(&req, clock_bytes, 4));
+  assert(rate == 192000);
 
   assert(select_alt(0));
   assert(select_alt(AUDIO_ALT_EAC3));
   assert(non_pcm && rate == 192000 && depth == 16);
-  // Updating/querying the ordinary clock must not retune an active carrier.
+  // CM6646-style topology shares one clock across all alternate settings.
   uint8_t normal_rate[] = {0x80, 0xbb, 0, 0}; // 48000
   assert(control_out(&req, normal_rate, 4));
-  assert(non_pcm && rate == 192000);
+  assert(non_pcm && rate == 48000);
   req.bmRequestType = 0xA1;
   assert(control_in(&req) && le32(control_reply) == 48000);
+  assert(select_alt(AUDIO_ALT_EAC3));
   // Two complete IEC61937 E-AC-3 bursts, followed by padding to drain them.
   static int32_t expected[24576];
   for (unsigned i = 0; i < 24576; ++i) {
@@ -169,10 +167,12 @@ static void check_eac3(void) {
   out_callback(oversized, sizeof(oversized));
   assert(usb_audio_bad_packets == bad + 1);
   assert(select_alt(0));
+  req.bmRequestType = 0x21;
+  assert(control_out(&req, normal_rate, 4));
   assert(select_alt(2));
   assert(rate == 48000 && !non_pcm && depth == 24);
   assert(select_alt(0));
-  puts("PASS: EAC3 192k carrier, two whole 24576-byte bursts, fixed clock isolation and packet bounds");
+  puts("PASS: EAC3 192k carrier, shared UAC2 clock, two whole 24576-byte bursts and packet bounds");
 }
 #endif
 
