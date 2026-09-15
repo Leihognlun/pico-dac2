@@ -27,6 +27,7 @@ static audio_block_queue_t blocks;
 static uint32_t mirror[2][SPDIF_BLOCK_FRAMES * 2];
 static uint32_t mirror_silence[SPDIF_BLOCK_FRAMES * 2];
 static uint mirror_sm, mirror_offset, mirror_dma;
+static bool mirror_active;
 #define OUTPUT_CONSUMERS 3u
 #else
 #define OUTPUT_CONSUMERS 1u
@@ -79,6 +80,9 @@ void spdif_init(unsigned pin, uint32_t sample_rate, uint8_t bit_depth,
   rate = sample_rate;
   depth = bit_depth;
   stream_non_pcm = non_pcm;
+#if PICODAC_OUTPUT_BOTH
+  mirror_active = i2s_mirror_enabled(non_pcm);
+#endif
   spdif_encode_init();
   // During starvation keep the Non-PCM status, including on zero padding.
   // Do not make a compressed receiver switch to PCM in the middle of a burst.
@@ -145,7 +149,13 @@ void spdif_init(unsigned pin, uint32_t sample_rate, uint8_t bit_depth,
   // Refill before the FIFO drains, even when USB has an interrupt pending.
   irq_set_priority(DMA_IRQ_NUM(SPDIF_DMA_IRQ), PICO_HIGHEST_IRQ_PRIORITY);
   irq_set_enabled(DMA_IRQ_NUM(SPDIF_DMA_IRQ), true);
-  audio_block_queue_reset(&blocks, OUTPUT_CONSUMERS);
+  audio_block_queue_reset(&blocks,
+#if PICODAC_OUTPUT_BOTH
+                          mirror_active ? OUTPUT_CONSUMERS : 1u
+#else
+                          OUTPUT_CONSUMERS
+#endif
+  );
   initialized = true;
 }
 
@@ -154,20 +164,27 @@ void spdif_start(void) {
   // Ignore flags left by initialization or the preceding stream.
   SPDIF_PIO->fdebug = 1u << (PIO_FDEBUG_TXSTALL_LSB + sm);
 #if PICODAC_OUTPUT_BOTH
-  SPDIF_PIO->fdebug = 1u << (PIO_FDEBUG_TXSTALL_LSB + mirror_sm);
+  if (mirror_active)
+    SPDIF_PIO->fdebug = 1u << (PIO_FDEBUG_TXSTALL_LSB + mirror_sm);
 #endif
   running = true;
   dma_irqn_set_channel_enabled(SPDIF_DMA_IRQ, dma_channel, true);
   dma_channel_set_read_addr(dma_channel, silence, true);
 #if PICODAC_OUTPUT_BOTH
-  dma_irqn_set_channel_enabled(SPDIF_DMA_IRQ, mirror_dma, true);
-  dma_channel_set_read_addr(mirror_dma, mirror_silence, true);
+  if (mirror_active) {
+    dma_irqn_set_channel_enabled(SPDIF_DMA_IRQ, mirror_dma, true);
+    dma_channel_set_read_addr(mirror_dma, mirror_silence, true);
+  }
 #endif
   // Fill the FIFO before starting the serializer.
   while (!pio_sm_is_tx_fifo_full(SPDIF_PIO, sm)) tight_loop_contents();
 #if PICODAC_OUTPUT_BOTH
-  while (!pio_sm_is_tx_fifo_full(SPDIF_PIO, mirror_sm)) tight_loop_contents();
-  pio_enable_sm_mask_in_sync(SPDIF_PIO, (1u << sm) | (1u << mirror_sm));
+  if (mirror_active) {
+    while (!pio_sm_is_tx_fifo_full(SPDIF_PIO, mirror_sm)) tight_loop_contents();
+    pio_enable_sm_mask_in_sync(SPDIF_PIO, (1u << sm) | (1u << mirror_sm));
+  } else {
+    pio_sm_set_enabled(SPDIF_PIO, sm, true);
+  }
 #else
   pio_enable_sm_mask_in_sync(SPDIF_PIO, 1u << sm);
 #endif
@@ -195,7 +212,13 @@ void spdif_stop(void) {
   pio_sm_clkdiv_restart(SPDIF_PIO, sm);
   pio_sm_exec(SPDIF_PIO, sm, pio_encode_jmp(offset));
   pio_sm_set_pins_with_mask(SPDIF_PIO, sm, 0, 1u << output_pin);
-  audio_block_queue_reset(&blocks, OUTPUT_CONSUMERS);
+  audio_block_queue_reset(&blocks,
+#if PICODAC_OUTPUT_BOTH
+                          mirror_active ? OUTPUT_CONSUMERS : 1u
+#else
+                          OUTPUT_CONSUMERS
+#endif
+  );
   running = false;
 }
 
@@ -234,9 +257,9 @@ void spdif_submit_buffer(void) {
   assert(blocks.writing >= 0);
   spdif_encode_block(encoded[blocks.writing], pcm, depth, rate, stream_non_pcm);
 #if PICODAC_OUTPUT_BOTH
-  for (unsigned i = 0; i < SPDIF_BLOCK_FRAMES * 2; ++i) {
-    mirror[blocks.writing][i] = i2s_mirror_sample(pcm[i], depth, stream_non_pcm);
-  }
+  if (mirror_active)
+    for (unsigned i = 0; i < SPDIF_BLOCK_FRAMES * 2; ++i)
+      mirror[blocks.writing][i] = i2s_mirror_sample(pcm[i], depth, false);
 #endif
   uint32_t interrupts = save_and_disable_interrupts();
   __mem_fence_release();

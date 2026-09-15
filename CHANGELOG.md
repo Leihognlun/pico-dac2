@@ -7,6 +7,8 @@
 - Add 192 kHz to the shared clock range for the E-AC-3 IEC 61937 carrier.
 - Fix Windows `usbaudio2.sys` startup failure (Device Manager Code 10) while
   retaining Linux E-AC-3 Dolby Atmos passthrough.
+- Stop the I2S state machine and hold DATA/BCLK/LRCLK low during non-PCM
+  passthrough so an attached I2S DAC cannot render carrier-clock noise.
 
 ## v0.2.0 - 2026-09-15
 

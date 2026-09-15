@@ -68,6 +68,8 @@ int main(void) {
   check_samples(16);
   check_samples(24);
   check_samples(32);
+  assert(i2s_mirror_enabled(false));
+  assert(!i2s_mirror_enabled(true));
   assert(i2s_mirror_sample((int16_t)0xf872, 16, true) == 0);
   assert(i2s_mirror_sample(0x4e1f, 16, true) == 0);
   puts("PASS: paired DMA ownership and starvation; I2S matches decoded SPDIF; non-PCM muted");

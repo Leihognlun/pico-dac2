@@ -58,7 +58,8 @@ USB 限制参考：[USB 2.0 规范](https://www.usb.org/document-library/usb-20-
   一个 Clock Source。旧版独立 Clock/Terminal 会导致 Windows Code 10。
 - 环形缓冲容量扩至 192 kHz 下 16 ms（24,576 字节）；USB 包快照原有 776 字节容量足够。
 - SPDIF channel status 为 non-PCM、192 kHz；保留每个载波字。USB 音量、静音不作用于载波。
-- BOTH 模式的 I2S 发送零样本并维持时钟，避免把压缩数据送进模拟 DAC。
+- BOTH 模式在透传期间停用 I2S DMA/状态机，并将 DATA/BCLK/LRCLK 拉低，避免
+  I2S DAC 因 192 kHz 载波时钟或格式切换产生噪声；SPDIF 光纤继续正常透传。
 - HID 媒体键和 LED 功能保留。只支持 SPDIF/BOTH 构建，I2S-only + EAC3 在配置时拒绝。
 
 ## 构建
