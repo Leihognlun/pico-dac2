@@ -22,6 +22,7 @@ static uint8_t frequency_code(uint32_t rate) {
     case 48000: return 0x2;
     case 88200: return 0x8;
     case 96000: return 0xa;
+    case 192000: return 0xe;
     default: assert(false); return 0x1; // Frequency not indicated.
   }
 }

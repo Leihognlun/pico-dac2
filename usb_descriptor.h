@@ -60,7 +60,7 @@ static const struct usb_device_descriptor device_descriptor = {
     .bMaxPacketSize0 = 64,    // Max packet size for ep0
     .idVendor = VENDOR_ID,    // Your vendor id
     .idProduct = PRODUCT_ID,  // Your product ID
-    .bcdDevice = 0x0108,      // 1.08: control status direction and SETUP cancellation
+    .bcdDevice = PICODAC_EAC3_PASSTHROUGH ? 0x0110 : 0x0108,
     .iManufacturer = 0,       // Manufacturer string index
     .iProduct = 0,            // Product string index
     .iSerialNumber = 0,       // No serial number
@@ -69,8 +69,8 @@ static const struct usb_device_descriptor device_descriptor = {
 
 #if PICODAC_OUTPUT_SPDIF
 // Type III uses the same six-byte format layout as Type I, with a
-// different bFormatType. Each alternate setting declares one codec.
-#define USB_IEC61937_ALT(alt, formats) { \
+// different bFormatType. A Type III alternate may declare multiple codecs.
+#define USB_CARRIER_ALT(alt, formats, type, terminal, packet_size) { \
     .as_interface = { \
         .bLength = sizeof(usb_standard_as_interface_descriptor), \
         .bDescriptorType = USB_DT_INTERFACE, \
@@ -82,18 +82,18 @@ static const struct usb_device_descriptor device_descriptor = {
     .cs_as_interface = { \
         .bLength = sizeof(struct usb_class_specific_as_interface_descriptor), \
         .bDescriptorType = USB_DT_CS_INTERFACE, .bDescriptorSubtype = 1, \
-        .bTerminalLink = AUDIO_CONTROL_ID_INPUT, .bFormatType = 3, \
+        .bTerminalLink = (terminal), .bFormatType = (type), \
         .bmFormats = (formats), .bNrChannels = 2, .bmChannelConfig = 3, \
     }, \
     .cs_as_format_type = { \
         .bLength = sizeof(struct usb_class_specific_as_type_i_format_descriptor), \
         .bDescriptorType = USB_DT_CS_INTERFACE, .bDescriptorSubtype = 2, \
-        .bFormatType = 3, .bSubslotSize = 2, .bBitResolution = 16, \
+        .bFormatType = (type), .bSubslotSize = 2, .bBitResolution = 16, \
     }, \
     .as_audio_data_endpoint = { \
         .bLength = sizeof(struct usb_standard_as_isochronous_audio_data_endpoint_descriptor), \
         .bDescriptorType = USB_DT_ENDPOINT, .bEndpointAddress = EP_AUDIO_STREAM_OUT, \
-        .bmAttributes = 0x05, .wMaxPacketSize = AUDIO_IEC61937_MAX_PACKET_SIZE, \
+        .bmAttributes = 0x05, .wMaxPacketSize = (packet_size), \
         .bInterval = 1, \
     }, \
     .cs_as_audio_data_endpoint = { \
@@ -106,6 +106,8 @@ static const struct usb_device_descriptor device_descriptor = {
         .bmAttributes = 0x11, .wMaxPacketSize = 4, .bInterval = 1, \
     }, \
 }
+#define USB_IEC61937_ALT(alt, formats) USB_CARRIER_ALT(alt, formats, 3, \
+    AUDIO_CONTROL_ID_INPUT, AUDIO_IEC61937_MAX_PACKET_SIZE)
 #endif
 
 struct configuration_descriptor {
@@ -120,6 +122,11 @@ struct configuration_descriptor {
         cs_ac_output_terminal;
     struct usb_class_specific_ac_feature_unit_descriptor_stereo
         cs_ac_feature_unit;
+#if PICODAC_EAC3_PASSTHROUGH
+    struct usb_class_specific_ac_clock_source_descriptor eac3_clock;
+    struct usb_class_specific_ac_input_terminal_descriptor eac3_input;
+    struct usb_class_specific_ac_output_terminal_descriptor eac3_output;
+#endif
   } __attribute__((packed)) ac;
   struct as {
     struct as_alt0 {
@@ -143,6 +150,9 @@ struct configuration_descriptor {
     struct as_alt as_dts_i;
     struct as_alt as_dts_ii;
     struct as_alt as_dts_iii;
+#if PICODAC_EAC3_PASSTHROUGH
+    struct as_alt as_eac3;
+#endif
 #endif
   } __attribute__((packed)) as;
 #if HID_ENABLE
@@ -269,6 +279,27 @@ struct configuration_descriptor {
                     .iFeature = 0,
                 },
         },
+#if PICODAC_EAC3_PASSTHROUGH
+    .ac.eac3_clock = {
+        .bLength = sizeof(struct usb_class_specific_ac_clock_source_descriptor),
+        .bDescriptorType = USB_DT_CS_INTERFACE, .bDescriptorSubtype = 0x0A,
+        .bClockID = AUDIO_CONTROL_ID_EAC3_CLOCK,
+        .bmAttributes = 1, .bmControls = 0x05, // fixed internal clock, freq/validity read-only
+    },
+    .ac.eac3_input = {
+        .bLength = sizeof(struct usb_class_specific_ac_input_terminal_descriptor),
+        .bDescriptorType = USB_DT_CS_INTERFACE, .bDescriptorSubtype = 2,
+        .bTerminalID = AUDIO_CONTROL_ID_EAC3_INPUT, .wTerminalType = 0x0101,
+        .bCSourceID = AUDIO_CONTROL_ID_EAC3_CLOCK, .bNrChannels = 2, .bmChannelConfig = 3,
+    },
+    .ac.eac3_output = {
+        .bLength = sizeof(struct usb_class_specific_ac_output_terminal_descriptor),
+        .bDescriptorType = USB_DT_CS_INTERFACE, .bDescriptorSubtype = 3,
+        .bTerminalID = AUDIO_CONTROL_ID_EAC3_OUTPUT, .wTerminalType = 0x0605,
+        .bSourceID = AUDIO_CONTROL_ID_EAC3_INPUT,
+        .bCSourceID = AUDIO_CONTROL_ID_EAC3_CLOCK,
+    },
+#endif
     .as =
         {
             .as_alt0 =
@@ -536,6 +567,15 @@ struct configuration_descriptor {
             .as_dts_i = USB_IEC61937_ALT(AUDIO_ALT_DTS_I, AUDIO_FORMAT_III_DTS_I),
             .as_dts_ii = USB_IEC61937_ALT(AUDIO_ALT_DTS_II, AUDIO_FORMAT_III_DTS_II),
             .as_dts_iii = USB_IEC61937_ALT(AUDIO_ALT_DTS_III, AUDIO_FORMAT_III_DTS_III),
+#if PICODAC_EAC3_PASSTHROUGH
+            // CM6646-style Type III carrier, excluding unsupported WMA D12.
+            // AC3/DTS compatibility mask, NOT a native E-AC-3 declaration.
+            // UAC3 E-AC-3 D21 must NOT be inserted into this UAC2 descriptor.
+            .as_eac3 = USB_CARRIER_ALT(AUDIO_ALT_EAC3,
+                AUDIO_FORMAT_III_AC3 | AUDIO_FORMAT_III_DTS_I |
+                AUDIO_FORMAT_III_DTS_II | AUDIO_FORMAT_III_DTS_III, 3,
+                AUDIO_CONTROL_ID_EAC3_INPUT, AUDIO_EAC3_MAX_PACKET_SIZE),
+#endif
             #endif
         },
 #if HID_ENABLE

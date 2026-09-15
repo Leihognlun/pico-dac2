@@ -38,6 +38,9 @@ def main():
          ["tests/usb_audio_passthrough_test.c", "usb_audio.c", "audio_device.c",
           "ringbuffer.c", "spdif_encode.c"]),
     ]
+    for base_name in ("passthrough", "descriptors_spdif"):
+        base = next(case for case in cases if case[0] == base_name)
+        cases.append((base_name + "_eac3", base[1] + ["-DPICODAC_EAC3_PASSTHROUGH=1"], base[2]))
     for name, flags, sources in cases:
         binary = build / (name + (".exe" if os.name == "nt" else ""))
         subprocess.run(common + flags + sources + ["-o", str(binary)], cwd=root, check=True)

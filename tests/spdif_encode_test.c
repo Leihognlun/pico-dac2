@@ -56,8 +56,8 @@ static void check_block(const int32_t *pcm, unsigned depth, unsigned rate,
 }
 
 int main(void) {
-  const unsigned rates[] = {44100, 48000, 88200, 96000};
-  const unsigned codes[] = {0, 2, 8, 10};
+  const unsigned rates[] = {44100, 48000, 88200, 96000, 192000};
+  const unsigned codes[] = {0, 2, 8, 10, 14};
   const unsigned depths[] = {16, 24, 32};
   int32_t samples[384];
   uint32_t random = 12345;
@@ -72,7 +72,7 @@ int main(void) {
     samples[1] = -1;
     samples[2] = (int32_t)(1u << (depth - 1));
     samples[3] = (int32_t)((1u << (depth - 1)) - 1);
-    for (unsigned r = 0; r < 4; ++r) {
+    for (unsigned r = 0; r < 5; ++r) {
       check_block(samples, depth, rates[r], codes[r], false);
       check_block(NULL, depth, rates[r], codes[r], false);
       if (depth == 16) {

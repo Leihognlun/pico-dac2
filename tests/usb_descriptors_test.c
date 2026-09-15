@@ -55,10 +55,10 @@ int main(void) {
       if (alt >= 0) { assert(alt == (int)seen++); assert(d[4] == (alt ? 2 : 0)); }
     } else if (alt > 0 && d[1] == USB_DT_CS_INTERFACE) {
       if (d[2] == 1) {
-        assert(d[0] == 16 && d[3] == AUDIO_CONTROL_ID_INPUT);
+        assert(d[0] == 16 && d[3] == (alt == 8 ? AUDIO_CONTROL_ID_EAC3_INPUT : AUDIO_CONTROL_ID_INPUT));
         assert(d[5] == (alt >= 4 ? 3 : 1));
         uint32_t mask = d[6] | (d[7] << 8) | (d[8] << 16) | ((uint32_t)d[9] << 24);
-        const uint32_t expected[] = {1, 1, 1, 1, 1, 128, 256, 512};
+        const uint32_t expected[] = {1, 1, 1, 1, 1, 128, 256, 512, 0x381};
         assert(mask == expected[alt]);
         assert(d[10] == 2);
       } else if (d[2] == 2) {
@@ -71,7 +71,7 @@ int main(void) {
       assert(d[0] == 7);
       unsigned max_packet = d[4] | (d[5] << 8);
       if (d[2] == EP_AUDIO_STREAM_OUT) {
-        assert(d[3] == 5 && max_packet == (alt >= 4 ? 388 : 776));
+        assert(d[3] == 5 && max_packet == (alt == 8 ? 772 : alt >= 4 ? 388 : 776));
       } else {
         assert(d[2] == EP_AUDIO_FEEDBACK_IN && d[3] == 0x11 && max_packet == 4);
       }
@@ -79,8 +79,18 @@ int main(void) {
     }
     offset += d[0];
   }
-  assert(seen == (PICODAC_OUTPUT_SPDIF ? 8 : 4));
+  assert(seen == (PICODAC_EAC3_PASSTHROUGH ? 9 : PICODAC_OUTPUT_SPDIF ? 8 : 4));
   assert(formats == seen - 1 && endpoints == formats * 2);
-  assert(device_descriptor.bcdDevice == 0x0108);
+  assert(device_descriptor.bcdDevice == (PICODAC_EAC3_PASSTHROUGH ? 0x0110 : 0x0108));
+#if PICODAC_EAC3_PASSTHROUGH
+  assert(configuration_descriptor.ac.eac3_clock.bClockID == 5);
+  assert(configuration_descriptor.ac.eac3_clock.bmControls == 5);
+  assert(configuration_descriptor.ac.eac3_input.bCSourceID == 5);
+  assert(configuration_descriptor.ac.eac3_output.bCSourceID == 5);
+  assert(configuration_descriptor.ac.eac3_output.bSourceID == 6);
+  assert(configuration_descriptor.ac.cs_ac_clock_source.bClockID == 4);
+  assert(configuration_descriptor.ac.cs_ac_interface.wTotalLength ==
+         sizeof(struct ac) - sizeof(usb_standard_ac_interface_descriptor));
+#endif
   puts("PASS: USB descriptor lengths, topology, formats and endpoints");
 }

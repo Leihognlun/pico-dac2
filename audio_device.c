@@ -90,7 +90,11 @@ void audio_device_init(void) {
   // --- Ring Buffer Init ---
   memset(&rb, 0, sizeof(ringbuffer_t));
   ringbuffer_init(&rb, calc_buffer_size(current_sample_rate),
+#if PICODAC_EAC3_PASSTHROUGH
+                  calc_buffer_size(192000));
+#else
                   calc_buffer_size(SAMPLE_RATES[N_SAMPLE_RATES - 1]));
+#endif
 
   // --- Audio output configuration ---
   audio_output_config = (audio_output_config_t){

@@ -4,6 +4,9 @@
 PCM 同时输出；AC-3/DTS 透传只送到 SPDIF，I2S 保持时钟并发送零样本。
 也可选择 `SPDIF` 或 `I2S` 单输出模式。
 
+新增默认关闭的 [E-AC-3 / JOC 实验透传 1.10](EAC3.md)：独立 192 kHz / Type III
+载波设置，普通 PCM 仍最高 96 kHz。需要 CM4 手动发送 IEC 61937 数据，接收端支持情况需实测。
+
 ## 1.03 实测结果
 
 用户确认：Linux 下使用 1.03（USB `bcdDevice=0x0103`）播放 96 kHz／24 位
