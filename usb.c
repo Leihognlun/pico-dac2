@@ -15,6 +15,7 @@
 // TODO 改为支持外部配置
 #include "usb_descriptor.h"
 #include "usb_hid.h"
+#include "usb_audio.h"
 #include "usb_control_state.h"
 
 #ifndef USB_QUEUE_LENGTH
@@ -1103,6 +1104,10 @@ static bool usb_set_interface(uint8_t itf, uint8_t alt) {
     p += p[0];
   }
   if (!found) return false;
+
+  // Validate the rate/format before changing endpoint state or GET_INTERFACE.
+  if (itf == INTERFACE_AUDIO_STREAM &&
+      !usb_audio_stream_can_set_interface(alt)) return false;
 
   // 启用端点
   walk_descriptor(desc, len, itf, alt_settings[itf], disable_ep);

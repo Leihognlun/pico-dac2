@@ -14,6 +14,9 @@
 static usb_ep_out_handler out_callback;
 static usb_device_set_interfacec_handler select_alt;
 static usb_control_interface_out_handler control_out;
+static usb_control_interface_in_handler control_in;
+static uint8_t response[64];
+static uint16_t response_len;
 static bool running, ready, acquired, non_pcm;
 static unsigned depth;
 static uint32_t rate;
@@ -90,7 +93,7 @@ void usb_device_set_ep_in_handler(uint8_t ep, usb_ep_in_handler cb) {
   (void)ep; (void)cb;
 }
 void usb_device_set_control_in_handler(uint8_t itf, usb_control_interface_in_handler cb) {
-  (void)itf; (void)cb;
+  assert(itf == INTERFACE_AUDIO_CONTROL); control_in = cb;
 }
 void usb_device_set_control_out_handler(uint8_t itf, usb_control_interface_out_handler cb) {
   assert(itf == INTERFACE_AUDIO_CONTROL); control_out = cb;
@@ -102,7 +105,10 @@ void usb_ep_n_start_transfer(uint8_t ep, bool in, const uint8_t *buf, uint16_t l
   (void)buf;
   if (!in) { assert(ep == EP_AUDIO_STREAM_OUT); receive_size = len; }
 }
-void usb_ep0_start_transfer(const uint8_t *buf, uint16_t len) { (void)buf; (void)len; }
+void usb_ep0_start_transfer(const uint8_t *buf, uint16_t len) {
+  assert(len <= sizeof(response));
+  memcpy(response, buf, len); response_len = len;
+}
 
 static void set_rate(uint32_t frequency) {
   struct usb_setup_packet_t req = {
@@ -135,10 +141,11 @@ static void check_passthrough(unsigned alt, unsigned burst_frames, unsigned type
   unsigned sent = 0;
   for (unsigned packet = 0; sent < 12288; ++packet) {
     // Alternating sizes deliberately split Pa/Pb from Pc/Pd at boundaries.
-    unsigned frames = packet % 3 == 0 ? 47 : 48;
+    unsigned frames = frequency == 192000 ? (packet % 3 == 0 ? 193 : 192) :
+                      (packet % 3 == 0 ? 47 : 48);
     unsigned count = frames * 2;
     if (count > 12288 - sent) count = 12288 - sent;
-    uint8_t bytes[192];
+    uint8_t bytes[AUDIO_IEC61937_MAX_PACKET_SIZE];
     for (unsigned i = 0; i < count; ++i) {
       uint16_t word = expected[sent + i];
       bytes[i * 2] = word;
@@ -147,12 +154,12 @@ static void check_passthrough(unsigned alt, unsigned burst_frames, unsigned type
     out_callback(bytes, count * 2);
     assert(receive_size == AUDIO_IEC61937_MAX_PACKET_SIZE);
     sent += count;
-    if (packet % 4 == 3) {
+    if (frequency == 192000 || packet % 4 == 3) {
       ready = true;
       audio_device_task();
     }
   }
-  assert(captured > 8000);
+  assert(captured > (frequency == 192000 ? 6000u : 8000u));
   assert(captured <= sent);
   assert(memcmp(capture, expected, captured * sizeof(int32_t)) == 0);
   assert(!select_alt(AUDIO_ALT_MAX + 1));
@@ -174,13 +181,14 @@ static void check_passthrough(unsigned alt, unsigned burst_frames, unsigned type
 }
 
 static void check_pcm(void) {
+  set_rate(48000);
   assert(select_alt(1));
   assert(!non_pcm && depth == 16);
   captured = 0;
   uint8_t bytes[192];
   memset(bytes, 0x55, sizeof(bytes));
   for (unsigned i = 0; i < 12; ++i) out_callback(bytes, sizeof(bytes));
-  assert(receive_size == AUDIO_MAX_PACKET_SIZE);
+  assert(receive_size == AUDIO_PCM16_MAX_PACKET_SIZE);
   audio_device_task(); // BUFFERING -> PLAYING
   audio_device_task(); // USB mute must still silence normal PCM.
   assert(captured == 384);
@@ -189,6 +197,54 @@ static void check_pcm(void) {
   assert(!non_pcm && depth == 24);
   assert(select_alt(3));
   assert(!non_pcm && depth == 32);
+}
+
+static uint32_t read_le32(const uint8_t *p) {
+  return p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+         ((uint32_t)p[3] << 24);
+}
+
+static void check_clocks(void) {
+  struct usb_setup_packet_t req = {
+      .bmRequestType = 0xa1, .bRequest = 2, .wValue = 0x100,
+      .wIndex = (AUDIO_CONTROL_ID_CLOCK << 8) | INTERFACE_AUDIO_CONTROL,
+      .wLength = 64};
+  assert(control_in(&req));
+  assert(response_len == 62 && response[0] == 5 && response[1] == 0);
+  const uint32_t expected[] = {44100, 48000, 88200, 96000, 192000};
+  for (unsigned i = 0; i < response[0]; ++i) {
+    assert(read_le32(response + 2 + i * 12) == expected[i]);
+    assert(read_le32(response + 6 + i * 12) == expected[i]);
+    assert(read_le32(response + 10 + i * 12) == 0);
+  }
+  req.wLength = 2;
+  assert(control_in(&req) && response_len == 2);
+  req.bmRequestType = 0x21; req.bRequest = 1; req.wLength = 4;
+  const uint8_t bytes[] = {0x00, 0xee, 0x02, 0x00}; // 192000
+  for (unsigned alt = 1; alt <= 3; ++alt) {
+    assert(select_alt(alt));
+    assert(!control_out(&req, bytes, 4));
+    assert(audio_device_get_sampling_freq() == 48000 && !non_pcm);
+  }
+  assert(select_alt(0));
+  assert(control_out(&req, bytes, 4)); // Set rate before selecting a format.
+  assert(!control_out(&req, bytes, 3));
+  req.bmRequestType = 0xa1;
+  assert(control_in(&req) && response_len == 4);
+  assert(read_le32(response) == 192000);
+  for (unsigned alt = 4; alt <= 7; ++alt) {
+    assert(select_alt(alt) && rate == 192000 && non_pcm);
+    for (unsigned pcm_alt = 1; pcm_alt <= 3; ++pcm_alt) {
+      assert(!usb_audio_stream_can_set_interface(pcm_alt));
+      assert(!select_alt(pcm_alt));
+      assert(rate == 192000 && non_pcm);
+    }
+    set_rate(96000);
+    set_rate(192000); // Active rate changes work for every Type III format.
+  }
+  set_rate(96000);
+  assert(select_alt(2) && rate == 96000 && !non_pcm);
+  assert(select_alt(0));
 }
 
 int main(void) {
@@ -203,13 +259,14 @@ int main(void) {
   audio_device_set_mute(2, true);
   const unsigned periods[] = {1536, 512, 1024, 2048};
   const unsigned types[] = {1, 11, 12, 13};
-  const uint32_t rates[] = {44100, 48000, 88200, 96000};
-  for (unsigned r = 0; r < 4; ++r) {
+  const uint32_t rates[] = {44100, 48000, 88200, 96000, 192000};
+  for (unsigned r = 0; r < 5; ++r) {
     for (unsigned i = 0; i < 4; ++i) {
       check_passthrough(AUDIO_ALT_AC3 + i, periods[i], types[i], rates[r]);
     }
   }
   check_pcm();
+  check_clocks();
   assert(non_pcm_blocks && pcm_blocks);
   puts("PASS: USB -> ring buffer -> SPDIF bit-exact AC3/DTS, controls bypass, starvation, format/rate switches");
 }

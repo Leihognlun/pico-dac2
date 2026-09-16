@@ -22,6 +22,7 @@ enum INTERFACE_ID {
   ((INTERFACE_AUDIO_STREAM - INTERFACE_AUDIO_CONTROL) + 1)
 
 #define AUDIO_MAX_PACKET_SIZE ((96 + 1) * 4 * 2)
+#define AUDIO_PCM16_MAX_PACKET_SIZE ((96 + 1) * 2 * 2)
 
 // UAC2 Audio Data Formats, Table A-4. Type III transports IEC 61937
 // in two 16-bit subslots; these bits are NOT IEC 61937 burst type codes.
@@ -38,7 +39,7 @@ enum INTERFACE_ID {
 #else
 #define AUDIO_ALT_MAX 3
 #endif
-#define AUDIO_IEC61937_MAX_PACKET_SIZE ((96 + 1) * 2 * 2)
+#define AUDIO_IEC61937_MAX_PACKET_SIZE ((192 + 1) * 2 * 2)
 
 #define EP_AUDIO_STREAM_OUT 0x01
 #define EP_AUDIO_FEEDBACK_IN 0x81

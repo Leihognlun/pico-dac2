@@ -60,7 +60,7 @@ static const struct usb_device_descriptor device_descriptor = {
     .bMaxPacketSize0 = 64,    // Max packet size for ep0
     .idVendor = VENDOR_ID,    // Your vendor id
     .idProduct = PRODUCT_ID,  // Your product ID
-    .bcdDevice = 0x0108,      // 1.08: control status direction and SETUP cancellation
+    .bcdDevice = 0x010a,      // 1.10: shared clock, AC3/DTS 192 kHz carriers
     .iManufacturer = 0,       // Manufacturer string index
     .iProduct = 0,            // Product string index
     .iSerialNumber = 0,       // No serial number
@@ -338,7 +338,7 @@ struct configuration_descriptor {
                             .bEndpointAddress = EP_AUDIO_STREAM_OUT,
                             .bmAttributes = 0b0101,  // asyncrhnous(0b100) and
                                                      // ishochronous(0b01)
-                            .wMaxPacketSize = AUDIO_MAX_PACKET_SIZE,
+                            .wMaxPacketSize = AUDIO_PCM16_MAX_PACKET_SIZE,
                             .bInterval = 0x01,  // 1ms
                         },
                     .cs_as_audio_data_endpoint =

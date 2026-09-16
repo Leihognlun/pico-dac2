@@ -28,7 +28,8 @@ static void ep_audio_out_handler(const uint8_t* buf, uint16_t len) {
   // Ignore a late completion after the host has closed the stream.
   if (audio_stream_current_alt == 0) return;
   const uint16_t max_packet = audio_stream_current_alt >= AUDIO_ALT_AC3 ?
-      AUDIO_IEC61937_MAX_PACKET_SIZE : AUDIO_MAX_PACKET_SIZE;
+      AUDIO_IEC61937_MAX_PACKET_SIZE : audio_stream_current_alt == 1 ?
+      AUDIO_PCM16_MAX_PACKET_SIZE : AUDIO_MAX_PACKET_SIZE;
   const unsigned frame_bytes = g_format == USB_SAMPLE_FORMAT_16 ? 4 : 8;
   if (len > max_packet || len % frame_bytes) {
     // 播放期间仅计数，避免日志阻塞收包。
@@ -112,6 +113,12 @@ static void ep_audio_in_handler() {
 
 bool usb_audio_control_set_interface(uint8_t alt) { return alt == 0; }
 
+bool usb_audio_stream_can_set_interface(uint8_t alt) {
+  return alt <= AUDIO_ALT_MAX &&
+         (alt == 0 || alt >= AUDIO_ALT_AC3 ||
+          audio_device_get_sampling_freq() <= 96000);
+}
+
 bool usb_audio_stream_set_interface(uint8_t alt) {
   // 设置新的备用接口设置 alt
   LOG_INFO("Set interface AUDIO_STREAM alt %d\r", alt);
@@ -119,6 +126,8 @@ bool usb_audio_stream_set_interface(uint8_t alt) {
     LOG_ERROR("unknown alt: %d", alt);
     return false;
   }
+
+  if (!usb_audio_stream_can_set_interface(alt)) return false;
 
   audio_stream_current_alt = alt;
 
@@ -234,7 +243,7 @@ bool usb_audio_control_in_request(const struct usb_setup_packet_t* pkt) {
           uint32_t dMIN;
           uint32_t dMAX;
           uint32_t dRES;
-        } subranges[4];
+        } subranges[5];
       } __attribute__((packed));
 
       static struct range4b ret = {
@@ -263,8 +272,11 @@ bool usb_audio_control_in_request(const struct usb_setup_packet_t* pkt) {
                   .dMAX = 96000,
                   .dRES = 0,
               },
+          .subranges[4] = { .dMIN = 192000, .dMAX = 192000, .dRES = 0 },
       };
-      usb_ep0_start_transfer((void*)&ret, MIN(pkt->wLength, sizeof(ret)));
+      ret.wNumSubRages = PICODAC_OUTPUT_SPDIF ? 5 : 4;
+      const uint16_t size = 2 + 12 * ret.wNumSubRages;
+      usb_ep0_start_transfer((void*)&ret, MIN(pkt->wLength, size));
       return true;
     }
   }
@@ -287,6 +299,9 @@ bool usb_audio_control_ouot_request(const struct usb_setup_packet_t* pkt,
     for (unsigned i = 0; i < N_SAMPLE_RATES; ++i) {
       if (freq == SAMPLE_RATES[i]) supported = true;
     }
+    if (PICODAC_OUTPUT_SPDIF && freq == 192000 &&
+        (audio_stream_current_alt == 0 || audio_stream_current_alt >= AUDIO_ALT_AC3))
+      supported = true;
     if (!supported) return false;
     audio_device_set_sampling_freq(freq);
     return true;

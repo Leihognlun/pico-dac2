@@ -46,13 +46,16 @@ int main(void) {
   assert(configuration_descriptor.ac.cs_ac_output_terminal.wTerminalType ==
          (PICODAC_OUTPUT_SPDIF ? 0x0605 : 0x0304));
   int alt = -1;
-  unsigned seen = 0, formats = 0, endpoints = 0;
+  unsigned seen = 0, formats = 0, endpoints = 0, clocks = 0;
   for (size_t offset = 0; offset < size;) {
     const uint8_t *d = base + offset;
     assert(d[0] >= 2 && offset + d[0] <= size);
     if (d[1] == USB_DT_INTERFACE) {
       alt = d[2] == INTERFACE_AUDIO_STREAM ? d[3] : -1;
       if (alt >= 0) { assert(alt == (int)seen++); assert(d[4] == (alt ? 2 : 0)); }
+    } else if (alt == -1 && d[1] == USB_DT_CS_INTERFACE && d[2] == 0x0a) {
+      ++clocks;
+      assert(d[3] == AUDIO_CONTROL_ID_CLOCK);
     } else if (alt > 0 && d[1] == USB_DT_CS_INTERFACE) {
       if (d[2] == 1) {
         assert(d[0] == 16 && d[3] == AUDIO_CONTROL_ID_INPUT);
@@ -71,7 +74,7 @@ int main(void) {
       assert(d[0] == 7);
       unsigned max_packet = d[4] | (d[5] << 8);
       if (d[2] == EP_AUDIO_STREAM_OUT) {
-        assert(d[3] == 5 && max_packet == (alt >= 4 ? 388 : 776));
+        assert(d[3] == 5 && max_packet == (alt >= 4 ? 772 : alt == 1 ? 388 : 776));
       } else {
         assert(d[2] == EP_AUDIO_FEEDBACK_IN && d[3] == 0x11 && max_packet == 4);
       }
@@ -81,6 +84,11 @@ int main(void) {
   }
   assert(seen == (PICODAC_OUTPUT_SPDIF ? 8 : 4));
   assert(formats == seen - 1 && endpoints == formats * 2);
-  assert(device_descriptor.bcdDevice == 0x0108);
+  assert(configuration_descriptor.ac.cs_ac_interface.wTotalLength ==
+         sizeof(struct ac) - sizeof(usb_standard_ac_interface_descriptor));
+  assert(clocks == 1);
+  assert(configuration_descriptor.ac.cs_ac_input_terminal.bCSourceID == AUDIO_CONTROL_ID_CLOCK);
+  assert(configuration_descriptor.ac.cs_ac_output_terminal.bCSourceID == AUDIO_CONTROL_ID_CLOCK);
+  assert(device_descriptor.bcdDevice == 0x010a);
   puts("PASS: USB descriptor lengths, topology, formats and endpoints");
 }
