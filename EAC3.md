@@ -96,11 +96,6 @@ ffmpeg -i input.mp4 -map 0:a:0 -c:a copy -f spdif eac3.spdif
 aplay -D hw:2,0 -t raw -f S16_LE -c 2 -r 192000 eac3.spdif
 ```
 
-Linux 可能把 Type I 和 Type III 映射为 `device 0`、`device 1`。本固件明确支持
-上述 `device 0` 的 S16_LE/192 kHz 原始载波路径：在 192 kHz 时将其视为 IEC 61937，
-只输出到 SPDIF 并关闭 I2S。`device 1` 由 ALSA 的 Type III 映射决定，不作为 Linux
-E-AC-3 播放入口。
-
 不要用 `default`、`plughw`、混音、重采样或软件音量。此处 `-r 192000` 是载波速率，
 不是把源音轨重采样。该实验仅覆盖 48 kHz E-AC-3，不覆盖 44.1/32 kHz 源、TrueHD/MAT、DTS-HD。
 

@@ -136,18 +136,6 @@ static void check_eac3(void) {
   req.bmRequestType = 0xA1;
   assert(control_in(&req) && le32(control_reply) == 48000);
   assert(select_alt(AUDIO_ALT_EAC3));
-  // ALSA device 0 exposes the Type I S16 alt. At 192 kHz this is also the
-  // raw IEC 61937 carrier path and must disable I2S just like Type III.
-  assert(select_alt(0));
-  assert(select_alt(1));
-  assert(non_pcm && rate == 192000 && depth == 16);
-  req.bmRequestType = 0x21;
-  assert(control_out(&req, normal_rate, 4));
-  assert(!non_pcm && rate == 48000 && depth == 16);
-  assert(control_out(&req, clock_bytes, 4));
-  assert(non_pcm && rate == 192000 && depth == 16);
-  assert(select_alt(0));
-  assert(select_alt(AUDIO_ALT_EAC3));
   // Two complete IEC61937 E-AC-3 bursts, followed by padding to drain them.
   static int32_t expected[24576];
   for (unsigned i = 0; i < 24576; ++i) {

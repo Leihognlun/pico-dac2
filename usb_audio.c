@@ -113,33 +113,6 @@ static void ep_audio_in_handler() {
 
 bool usb_audio_control_set_interface(uint8_t alt) { return alt == 0; }
 
-static void usb_audio_start_alt(uint8_t alt) {
-  if (alt == 1) {
-    // Linux exposes Type I and Type III as separate PCM devices. Raw E-AC-3
-    // sent through device 0 therefore selects the 16-bit Type I alt. At the
-    // dedicated 192 kHz carrier rate it is IEC 61937, not audible PCM.
-    bool carrier =
-#if PICODAC_EAC3_PASSTHROUGH
-        audio_device_get_sampling_freq() == AUDIO_EAC3_RATE;
-#else
-        false;
-#endif
-    audio_device_stream_start(16, carrier);
-    g_format = USB_SAMPLE_FORMAT_16;
-  } else if (alt == 2) {
-    audio_device_stream_start(24, false);
-    g_format = USB_SAMPLE_FORMAT_24;
-  } else if (alt == 3) {
-    audio_device_stream_start(32, false);
-    g_format = USB_SAMPLE_FORMAT_32;
-#if PICODAC_OUTPUT_SPDIF
-  } else if (alt >= AUDIO_ALT_AC3) {
-    audio_device_stream_start(16, true);
-    g_format = USB_SAMPLE_FORMAT_16;
-#endif
-  }
-}
-
 bool usb_audio_stream_set_interface(uint8_t alt) {
   // 设置新的备用接口设置 alt
   LOG_INFO("Set interface AUDIO_STREAM alt %d\r", alt);
@@ -156,7 +129,23 @@ bool usb_audio_stream_set_interface(uint8_t alt) {
   if (alt == AUDIO_ALT_EAC3) audio_device_set_sampling_freq(AUDIO_EAC3_RATE);
 #endif
 
-  usb_audio_start_alt(alt);
+  if (alt == 1) {
+    audio_device_stream_start(16, false);
+    g_format = USB_SAMPLE_FORMAT_16;
+  } else if (alt == 2) {
+    audio_device_stream_start(24, false);
+    g_format = USB_SAMPLE_FORMAT_24;
+  } else if (alt == 3) {
+    audio_device_stream_start(32, false);
+    g_format = USB_SAMPLE_FORMAT_32;
+#if PICODAC_OUTPUT_SPDIF
+  } else if (alt >= AUDIO_ALT_AC3) {
+    // Type III is an already packed IEC 61937 stereo/16-bit carrier.
+    // Reuse the lossless 16-bit unpacker; no codec parsing or re-encoding.
+    audio_device_stream_start(16, true);
+    g_format = USB_SAMPLE_FORMAT_16;
+#endif
+  }
 
   if (alt != 0) {
     // 触发反馈传输
@@ -317,14 +306,7 @@ bool usb_audio_control_ouot_request(const struct usb_setup_packet_t* pkt,
       if (freq == SAMPLE_RATES[i]) supported = true;
     }
     if (!supported) return false;
-    const bool carrier_mode_changed = audio_stream_current_alt == 1 &&
-        ((audio_device_get_sampling_freq() == AUDIO_EAC3_RATE) !=
-         (freq == AUDIO_EAC3_RATE));
     audio_device_set_sampling_freq(freq);
-    if (carrier_mode_changed) {
-      audio_device_stream_stop();
-      usb_audio_start_alt(audio_stream_current_alt);
-    }
     return true;
   } else if (pkt->bmRequestType == 0x21 && pkt->bRequest == UAC2_CS_REQ_CUR &&
              (pkt->wValue >> 8) == UAC2_FU_MUTE_CONTROL &&
