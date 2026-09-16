@@ -4,6 +4,15 @@
 PCM 同时输出；AC-3/DTS 透传只送到 SPDIF，I2S 保持时钟并发送零样本。
 也可选择 `SPDIF` 或 `I2S` 单输出模式。
 
+新增可选 `PICODAC_INPUT=SD_EAC3` 本地播放模式：按 GPIO2/3/4/5 的 SPI0 接线
+读取 TF 卡裸 48 kHz E-AC-3，封装为 192 kHz IEC 61937 载波输出。
+接线、单独固件和限制见 [TF 卡播放说明](SD_EAC3.md)。下文的 USB altset 和
+Windows/Linux 声卡行为适用于默认 `PICODAC_INPUT=USB` 模式。
+
+2026-09-16：用户确认 TF 无串口日志版播放无卡顿，作为当前可用基线。
+它保留诊断计时和计数逻辑，仅关闭 UART 输出；归档固件及校验值见
+[TF 可用版本记录](SD_EAC3.md)。
+
 ## 当前版本：192 kHz 透传与实测结果
 
 当前代码的 USB `bcdDevice=0x010a`。最近的修改为 altset 4、5、6、7
@@ -151,7 +160,8 @@ SPDIF 和 BOTH 构建提供 USB Audio Class 2.0 **Type III / IEC 61937** 格式�
 
 四个 Type III 格式使用两通道、16 位、little-endian 的 IEC 61937 载波。
 主机/播放器必须先封装 Pa/Pb/Pc/Pd、压缩数据和填充，再选择对应 Type III 格式。
-固件不对裸 `.ac3` / `.dts` 文件进行封装，也不在 PCM alternate setting 中自动检测压缩数据。
+USB 模式不对裸 `.ac3` / `.dts` 文件进行封装，也不在 PCM alternate setting 中自动检测压缩数据。
+TF 模式则自行封装裸 E-AC-3，见 [SD_EAC3.md](SD_EAC3.md)。
 载波时钟支持上述五档；播放时必须匹配主机封装和接收器支持的速率。
 192 kHz 时每毫秒为 192 帧，端点预留 193 帧（772 字节）以容纳反馈调整。
 SPDIF/BOTH 环形缓冲区的最大容量已扩至 192 kHz 所需大小，

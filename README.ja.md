@@ -6,6 +6,11 @@ Raspberry Pi Pico を USB DAC（Digital-to-Analog Converter）として機能さ
 
 ## 主な特徴
 
+- **TF カードからの E-AC-3 再生（オプション）:** `PICODAC_INPUT=SD_EAC3` で
+  SPI0（SCLK=2、MOSI=3、MISO=4、CS=5）のカードから裸の 48 kHz E-AC-3 を読み、
+  192 kHz IEC 61937 キャリアとして SPDIF 出力します。既定ファイルは `0:/TRACK.EC3`。
+  この単独再生モードでは USB サウンドカードを起動しません。
+  [接続・ビルド・制限（中国語）](SD_EAC3.md) を参照してください。
 - **I2S + SPDIF 同時出力（既定）:** `PICODAC_OUTPUT=BOTH`。
   SPDIF は GPIO 22、I2S は DATA=18、BCLK=16、LRCLK=17 です。
   PCM は両方に出力し、圧縮音声の透過転送時は SPDIF のみにデータを送り、

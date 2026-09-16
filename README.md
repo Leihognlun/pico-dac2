@@ -6,6 +6,12 @@ This project provides firmware to enable the Raspberry Pi Pico as a USB DAC (Dig
 
 ## Features
 
+- **Optional standalone TF-card E-AC-3 player:** Build with
+  `PICODAC_INPUT=SD_EAC3` to read raw 48 kHz E-AC-3 from SPI0 microSD
+  (SCLK=2, MOSI=3, MISO=4, CS=5), package IEC 61937 and output a 192 kHz
+  SPDIF carrier. Default file: `0:/TRACK.EC3`. USB remains the default input;
+  the standalone build does not enumerate as a USB sound card.
+  See [TF wiring, build and limitations (中文)](SD_EAC3.md).
 - **Synchronized I2S + SPDIF output (default):** SPDIF GPIO 22;
   I2S DATA=18, BCLK=16, LRCLK=17. PCM plays on both outputs; AC-3/DTS
   plays only on SPDIF while I2S sends zeros with its clocks running.
