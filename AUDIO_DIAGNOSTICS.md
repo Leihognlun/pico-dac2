@@ -1,5 +1,10 @@
 # 双输出音频诊断固件 1.03
 
+本文保留 1.03 的诊断记录和复测条件。当前代码的 USB `bcdDevice=0x010a`：
+PCM 仍最高 96 kHz，BOTH/SPDIF 的 altset 4–7 已增加 192 kHz 透传载波。
+用户已确认当前版 Windows 声卡识别及树莓派 Linux E-AC-3 / Dolby Atmos 透传，
+见 [当前 SPDIF 功能与实测结果](SPDIF.md)。这些新结果不替代下文的 1.03 诊断数据。
+
 文件：`build/mdac_adc2_diag_1.03.uf2`。
 USB `bcdDevice=0x0103`；BOTH 输出；系统时钟 132 MHz；SPDIF GPIO22。
 包含 USB 缓冲提交时序修正，通过原有 HID 输入端点返回诊断计数。
@@ -36,7 +41,8 @@ cat /proc/asound/card*/stream*
 
 请提供日志和参数，并记录杂音大约发生在监测开始后的第几秒。
 `Status: Stop` 只能说明接口支持哪些格式，不能说明实际播放格式。
-当前最高支持 96 kHz；192 kHz 源文件不能作为 USB 实际工作于 192 kHz 的证据。
+1.03 最高支持 96 kHz；当前版仅 Type III 透传增加 192 kHz 载波，PCM 仍最高 96 kHz。
+无论哪个版本，192 kHz 源文件都不能作为 USB 实际工作于 192 kHz 的证据。
 
 ## 计数解释
 

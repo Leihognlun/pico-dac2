@@ -22,11 +22,18 @@ This project provides firmware to enable the Raspberry Pi Pico as a USB DAC (Dig
   volume/mute and is transmitted with Non-PCM channel status. Requires a
   passthrough-capable player and an AC-3/DTS receiver; this firmware does not
   encode multichannel PCM. See [setup and limitations](SPDIF.md#dolby-digital--dts-透传).
+- **User-verified on the current firmware (`bcdDevice=0x010a`):** Windows
+  recognizes the sound card; E-AC-3 (Dolby Digital Plus) and Dolby Atmos
+  passthrough work on the user's Raspberry Pi Linux playback setup.
+  The USB descriptors still advertise AC-3/DTS, not a separate E-AC-3 format.
+  This result does not establish Windows E-AC-3/Atmos playback, TrueHD Atmos,
+  or compatibility with every player/receiver. See [test details](SPDIF.md).
 - **USB Audio Class 2.0 Compliant:**
   - Works on many operating systems (Windows, macOS, Linux) without requiring driver installation.
   - Supports flow control via the Feedback Endpoint.
 - **High-Resolution Audio Support:**
-  - **Sampling Rates:** 44.1kHz, 48kHz, 88.2kHz, 96kHz
+  - **PCM Sampling Rates:** 44.1kHz, 48kHz, 88.2kHz, 96kHz
+  - **IEC 61937 Carrier Rates (altsets 4–7):** the above rates plus 192kHz
   - **Bit Depths:** 16bit, 24bit, 32bit
 - **HID Control:**
   - Implements a Human Interface Device (HID) endpoint for custom firmware control. (Currently, only dummy data transmission/reception is implemented. Future feature additions are planned.)
@@ -68,6 +75,13 @@ cmake --build .
 ```
 
 Upon successful compilation, a file named `mdac_adc2.uf2` will be generated in the `build` directory.
+
+For an already-configured Windows build, the project's VS Code task uses the
+Pico SDK's Ninja v1.13.2 directly:
+
+```powershell
+& "$env:USERPROFILE/.pico-sdk/ninja/v1.13.2/ninja.exe" -C build
+```
 
 ### Changing GPIO Pins
 

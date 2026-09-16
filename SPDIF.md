@@ -4,6 +4,26 @@
 PCM 同时输出；AC-3/DTS 透传只送到 SPDIF，I2S 保持时钟并发送零样本。
 也可选择 `SPDIF` 或 `I2S` 单输出模式。
 
+## 当前版本：192 kHz 透传与实测结果
+
+当前代码的 USB `bcdDevice=0x010a`。最近的修改为 altset 4、5、6、7
+增加了 **192000 Hz（192 kHz）** 双声道 16 位 IEC 61937 载波支持，
+PCM altset 1、2、3 仍最高支持 96 kHz。
+
+用户已确认当前版本：
+
+- Windows 能正常识别声卡。
+- 树莓派 Linux 上可以透传 E-AC-3（Dolby Digital Plus）及 Dolby Atmos。
+
+以上是用户实际播放链路的验证结果；播放器、接收器型号、实际 altset、载波速率
+及持续播放时长尚未记录，不据此推定其他设备、Windows E-AC-3/Atmos 播放或
+TrueHD Atmos 也已验证。USB 描述符仍声明 AC-3 和 DTS-I/II/III，
+没有新增独立的 E-AC-3 格式；固件按原样传送主机封装的载波，不解析压缩编码。
+
+所有非零 altset 恢复使用同一输入终端 `bTerminalLink=0x01` 和时钟源 `0x04`。
+此前仅给 altset 4 增加独立终端/时钟的版本无法在 Windows 正常加载，已移除该设计。
+共享时钟在 BOTH/SPDIF 构建报告五档速率；各格式通过端点包容量及运行时校验限制速率。
+
 ## 1.03 实测结果
 
 用户确认：Linux 下使用 1.03（USB `bcdDevice=0x0103`）播放 96 kHz／24 位
@@ -34,6 +54,13 @@ cmake --build build -j 4
 
 生成 `build/mdac_adc2.uf2`，通过 BOOTSEL 模式复制到 Pico 即可烧录。
 无需额外安装或链接 pico-extras；适配的 PIO 程序已包含在工程中。
+
+Windows 工程已配置 Pico SDK 2.3.1 和 SDK 配套 Ninja v1.13.2。
+已有 `build` 配置时，可直接使用与 VS Code `Compile Project` 相同的命令：
+
+```powershell
+& "$env:USERPROFILE/.pico-sdk/ninja/v1.13.2/ninja.exe" -C build
+```
 
 切回 I2S：
 
@@ -70,7 +97,10 @@ SPDIF 编码前的 PCM 同时转换为 I2S 数据；不会把 SPDIF 的 BMC 编�
 | 32 位 | 取高 24 位，丢弃低 8 位，不加抖动 |
 
 PCM 均支持双声道 44.1、48、88.2、96 kHz。沿用 USB 音量、主/左右声道静音和反馈端点。
-采样率修改会重置输出和音频缓冲区，再重新缓冲播放。采样率请求仅接受上述四个值。
+采样率修改会重置输出和音频缓冲区，再重新缓冲播放。PCM 活动期间仅接受上述四档；
+BOTH/SPDIF 构建在停止状态或 Type III 透传期间还接受 192000 Hz。
+192 kHz 下不能直接切入 PCM，主机需先将共享时钟设回受支持的 PCM 速率。
+拒绝不兼容的接口切换时保持原端点和接口状态。I2S 单输出仍只提供四档 PCM 速率。
 
 `spdif_encode.c` 生成完整的 192 帧块，包含 B/M/W 前导码、有效性位、声道状态及偶校验。
 声道状态随输入格式更新 PCM/Non-PCM、采样率和有效位数。
@@ -81,7 +111,9 @@ PCM 均支持双声道 44.1、48、88.2、96 kHz。沿用 USB 音量、主/左�
 
 The system clock is now 132 MHz (1584 MHz PLL VCO / 6 / 2), within the SDK PLL limits.
 Both PIO serializers use 256 cycles/frame and the same rounded fractional divider.
-Average rate error is about +100 ppm at 44.1/88.2 kHz; 48/96 kHz are exact on average.
+With the current divider rounding, calculated average rate error is about +100 ppm
+at 44.1/88.2 kHz and -727 ppm at nominal 192 kHz (about 191860 Hz);
+48/96 kHz are exact on average. These are calculated values, not pin measurements.
 Fractional-divider jitter and receiver compatibility still require hardware validation.
 
 Periodic distortion diagnostics (cumulative debugger counters, reset on reboot):
@@ -91,34 +123,39 @@ Periodic distortion diagnostics (cumulative debugger counters, reset on reboot):
 - `spdif_tx_stall_count` / `i2s_tx_stall_count`: DMA intervals with a PIO TX stall.
 
 No diagnostic printing is added to the audio hot path. Compare counter changes during
-an audible fault. The clock correction has not yet been verified on hardware to fix
-the reported 12-13 second recurrence. Record rate, depth, DAC model and whether SPDIF
-is affected at the same time.
+an audible fault and record rate, depth, DAC model and whether SPDIF is affected at
+the same time. The Linux 96 kHz/24-bit result above applies to firmware 1.03 as a
+whole; it does not isolate the effect of the clock correction.
 
 USB 缓冲提交已按 RP2040 并发访问要求改为两步：先写长度、PID 和 FULL，
 等待至少 12 个系统时钟周期，再置 AVAILABLE。适用于音频、反馈及控制端点。
 参考 [TinyUSB 的 RP2040 驱动](https://github.com/hathach/tinyusb/blob/master/src/portable/raspberrypi/rp2040/rp2040_usb.c)
 中的缓冲控制寄存器写入顺序。新增主机测试检查提交前的寄存器状态；
-该测试不能模拟芯片时钟域竞争，周期性噪音是否消失仍需烧录后连续播放验证。
+该测试不能模拟芯片时钟域竞争；已确认的 1.03 播放结果见上文，其他条件需分别验证。
 
 ## Dolby Digital / DTS 透传
 
 SPDIF 和 BOTH 构建提供 USB Audio Class 2.0 **Type III / IEC 61937** 格式，
-用于将已编码的 Dolby Digital（AC-3）或 DTS Core 音轨送到支持对应格式的功放。
+用于将主机封装的压缩音轨送到支持对应格式的功放，描述符声明 AC-3 和 DTS Core 格式。
 这不是 AC-3/DTS 编码器或解码器，不会把游戏或系统的多声道 PCM 实时编码成 5.1。
-不声明 Dolby Digital Plus（E-AC-3）、TrueHD、DTS-HD、Atmos 支持。
+当前版本还已由用户在树莓派 Linux 上验证 E-AC-3 和 Dolby Atmos 透传，
+但没有新增 E-AC-3 USB 格式声明，也未验证 TrueHD、DTS-HD 或所有 Atmos 载体。
 
-| USB AudioStreaming alternate setting | 格式 |
-| --- | --- |
-| 0 | 停止 |
-| 1 / 2 / 3 | 原有 PCM 16 / 24 / 32 位 |
-| 4 | IEC 61937 AC-3（Dolby Digital） |
-| 5 / 6 / 7 | IEC 61937 DTS-I / DTS-II / DTS-III |
+| USB AudioStreaming alternate setting | 声明格式 | 支持速率（kHz） | OUT 最大包（字节） |
+| --- | --- | --- | --- |
+| 0 | 停止 | — | — |
+| 1 | PCM 16 位 | 44.1 / 48 / 88.2 / 96 | 388 |
+| 2 / 3 | PCM 24 / 32 位（32 位容器） | 44.1 / 48 / 88.2 / 96 | 776 |
+| 4 | IEC 61937 AC-3（Dolby Digital） | 44.1 / 48 / 88.2 / 96 / 192 | 772 |
+| 5 / 6 / 7 | IEC 61937 DTS-I / DTS-II / DTS-III | 44.1 / 48 / 88.2 / 96 / 192 | 772 |
 
-四个新增格式使用两通道、16 位、little-endian 的 IEC 61937 载波。
+四个 Type III 格式使用两通道、16 位、little-endian 的 IEC 61937 载波。
 主机/播放器必须先封装 Pa/Pb/Pc/Pd、压缩数据和填充，再选择对应 Type III 格式。
 固件不对裸 `.ac3` / `.dts` 文件进行封装，也不在 PCM alternate setting 中自动检测压缩数据。
-载波时钟沿用上述四档；播放时必须匹配音轨和接收器支持的速率，常见为 48 kHz。
+载波时钟支持上述五档；播放时必须匹配主机封装和接收器支持的速率。
+192 kHz 时每毫秒为 192 帧，端点预留 193 帧（772 字节）以容纳反馈调整。
+SPDIF/BOTH 环形缓冲区的最大容量已扩至 192 kHz 所需大小，
+SPDIF 声道状态也增加了对应速率标记。载波速率不等于压缩音轨的原始 PCM 采样率。
 I2S 构建仅保留 PCM alternate settings，不提供压缩透传。
 在 BOTH 模式下选择 AC-3/DTS 时，I2S 整块输出零样本，绝不发送压缩载波；切回 PCM 后自动恢复双输出。
 
@@ -132,7 +169,7 @@ SPDIF 声道状态的 Non-PCM 位设为 1，有效性位 V 也设为 1，避免�
 ### 在 Windows 上使用
 
 1. 烧录新的 `build/mdac_adc2.uf2`，重新插拔 USB，让主机重新读取描述符。
-   USB 设备版本已更新为 `0x0101`；若仍显示旧格式，可移除旧设备实例后重新连接。
+   当前代码的 USB 设备版本为 `0x010a`；若仍显示旧格式，可移除旧设备实例后重新连接。
 2. SPDIF 输出接支持 AC-3/DTS 的功放或家庭影院接收器，选择对应光纤/同轴输入。
 3. 使用支持 WASAPI 独占和 encoded passthrough 的播放器，在输出设置中选择本设备，
    开启 AC-3、DTS bitstream/passthrough；不要选择解码为多声道 PCM。
@@ -142,7 +179,22 @@ SPDIF 声道状态的 Non-PCM 位设为 1，有效性位 V 也设为 1，避免�
 Windows 内置 `usbaudio2.sys` 支持上述 Type III 格式，见
 [Microsoft USB Audio 2.0 驱动文档](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/usb-2-0-audio-drivers)。
 其他系统也需由驱动实际选择 Type III alternate setting；仅把数据作为 PCM 写入 alt 1 不会开启透传。
-本次只完成软件测试和固件构建，Windows 枚举、播放器协商及功放解码均需实机确认。
+当前版本已由用户确认 Windows 能正常识别声卡；Windows 上具体编码格式的
+播放器协商和功放解码仍需单独验证，不能以正常枚举替代播放验证。
+
+### 树莓派 Linux 实测与复测记录
+
+用户已确认 E-AC-3 / Dolby Atmos 透传成功。复测时沿用已成功的播放器和接收器配置，
+保持 encoded passthrough，避免软件混音、音量处理或重采样。
+播放期间可记录以下信息，便于确认实际接口与载波速率：
+
+```bash
+cat /proc/asound/card*/stream*
+```
+
+记录运行中的 altset、采样率、播放器/系统版本和接收器格式显示。
+停止状态下列出的格式只是设备能力列表，不是实际播放参数。
+可结合 [音频诊断说明](AUDIO_DIAGNOSTICS.md) 观察欠载、丢帧和 PIO 停顿增量。
 
 ## 验证
 
@@ -152,17 +204,21 @@ Windows 内置 `usbaudio2.sys` 支持上述 Type III 格式，见
 python tests/run_tests.py
 ```
 
-覆盖四种采样率 × 三种 PCM 输入位深、PCM/Non-PCM 零填充、前导码、音频位序、
+编码器测试覆盖五种采样率 × 三种输入位深、PCM/Non-PCM 零填充、前导码、音频位序、
 有效性、偶校验和完整声道状态块，并检查 SPDIF/I2S 两套 USB 描述符。
 另外检查 I2S PIO 源码的周期数、MSB 位序和 LRCLK 延迟，比较 I2S 数据与 SPDIF
 解码后的有效样本，并测试双 DMA 的块配对、存储占用和缺数据行为。
 透传集成测试使用真实的 USB 音频处理、环形缓冲区和 SPDIF 编码代码，仅替换硬件接口：
-输入跨包、跨块的合成 AC-3/DTS IEC 61937 突发，验证四种格式 × 四种载波时钟的逐位一致性、
-音量/静音旁路、缺数据及 PCM/透传/采样率切换。合成载荷不是可供功放解码的真实音轨。
+输入跨包、跨块的合成 AC-3/DTS IEC 61937 突发，验证四种格式 × 五种载波时钟的逐位一致性、
+192/193 帧包、音量/静音旁路、缺数据及 PCM/透传/采样率切换。
+还检查单一时钟、各 altset 终端一致、包容量、时钟 GET RANGE/GET CUR、
+活动 PCM 拒绝 192 kHz，以及 192 kHz 下拒绝切入 PCM。
+编码器单元测试包含 192 kHz PCM 并不表示 USB PCM 开放了该速率。
+合成载荷不是可供功放解码的真实音轨，也不能代替 E-AC-3/Atmos 播放验证。
 
 硬件验收建议：
 
-1. 连接 SPDIF DAC，逐个测试上述采样率和 USB 位深，确认锁定和声音正常。
+1. 连接 SPDIF DAC，逐个测试 PCM 的四档采样率和 USB 位深，确认锁定和声音正常。
 2. 播放仅左/仅右声道信号，确认声道顺序；测试系统音量及静音。
 3. 连续执行停止/启动、位深切换及采样率切换，检查无旧音频重放。
 4. 用逻辑分析仪验证 192 帧块、输出采样率及播放中断供数据时的静音块。
@@ -170,6 +226,8 @@ python tests/run_tests.py
    重复暂停/恢复和 PCM/压缩音轨切换。
 6. BOTH 模式下同时观察两路输出，长时间播放 44.1/88.2 kHz PCM，确认没有累计漂移；
    AC-3/DTS 播放时检查 I2S DATA 为零、时钟保持，切回 PCM 后两路恢复。
+7. 在已支持的播放链路上复测 192 kHz 载波和 E-AC-3/Atmos，记录运行参数、
+   功放显示及诊断计数，并重复透传与 96 kHz 以下 PCM 的切换。
 
 软件测试和编译不能代替实际的接收器锁定、电气和听音验证。
 
