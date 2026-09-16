@@ -9,6 +9,9 @@
   retaining Linux E-AC-3 Dolby Atmos passthrough.
 - Stop the I2S state machine and hold DATA/BCLK/LRCLK low during non-PCM
   passthrough so an attached I2S DAC cannot render carrier-clock noise.
+- Treat the Linux Type-I S16 device at 192 kHz as the E-AC-3 IEC 61937 carrier
+  path. This keeps the working ALSA `device 0` flow on S/PDIF only instead of
+  leaking the carrier into I2S.
 
 ## v0.2.0 - 2026-09-15
 
