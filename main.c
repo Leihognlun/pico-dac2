@@ -2,6 +2,8 @@
 
 #include "audio_device.h"
 #include "blink.h"
+#include "cec_arc.h"
+#include "ddc_edid.h"
 #include "hardware/clocks.h"
 #include "log.h"
 #include "pico/stdlib.h"
@@ -26,6 +28,8 @@ int main() {
   stdio_init_all();
 
   blink_init(pio1, PICO_DEFAULT_LED_PIN);
+  ddc_edid_init();
+  cec_arc_init();
 #if PICODAC_INPUT_SD
   sd_eac3_player_run();
 #else
@@ -42,6 +46,7 @@ int main() {
     usb_device_task();
 
     audio_device_task();
+    cec_arc_task();
   }
 #endif
 }

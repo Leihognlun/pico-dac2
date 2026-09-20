@@ -1,5 +1,10 @@
 # TF 卡 E-AC-3 → SPDIF 透传
 
+`arc-tx-eac3` 分支新增 [CEC TV / ARC TX 测试版本](CEC_ARC.md)：GPIO8 输出音频、
+GPIO18 接 CEC，只有 ARC 握手成功后才播放。下方 GPIO22 / BOTH 的可用版本是
+**原无 CEC 基线**，归档保持不变；在新分支重建旧接线需显式设置
+`PICODAC_CEC=OFF` 和 `PICODAC_SPDIF_PIN=22`。
+
 `PICODAC_INPUT=SD_EAC3` 是独立的本地播放模式：上电挂载 TF 卡，读取指定的
 **裸 E-AC-3 文件**，在 Pico 上封装 IEC 61937，经现有 SPDIF PIO/DMA 后端输出。
 默认 USB 声卡模式仍为 `PICODAC_INPUT=USB`，两种输入通过构建选项选择。
@@ -71,7 +76,8 @@ E-AC-3 converted stream；帧的音频块数支持 1、2、3、6，按六块组�
 ```powershell
 & "$env:USERPROFILE/.pico-sdk/cmake/v4.3.4/bin/cmake.exe" -S . -B build/sd-eac3 -G Ninja `
   "-DCMAKE_MAKE_PROGRAM=$env:USERPROFILE/.pico-sdk/ninja/v1.13.2/ninja.exe" `
-  -DCMAKE_BUILD_TYPE=Release -DPICODAC_INPUT=SD_EAC3 -DPICODAC_OUTPUT=BOTH
+  -DCMAKE_BUILD_TYPE=Release -DPICODAC_INPUT=SD_EAC3 -DPICODAC_OUTPUT=BOTH `
+  -DPICODAC_CEC=OFF -DPICODAC_SPDIF_PIN=22
 & "$env:USERPROFILE/.pico-sdk/ninja/v1.13.2/ninja.exe" -C build/sd-eac3
 ```
 

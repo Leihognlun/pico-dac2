@@ -1,5 +1,6 @@
 #include "sd_eac3_player.h"
 #include "sd_diagnostics.h"
+#include "cec_arc.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -96,6 +97,7 @@ static void producer(void) {
 }
 
 static void diagnostics(void) {
+  cec_arc_task();
   // consumed is owned by this core; produced only advances on the other core.
   unsigned c = atomic_load_explicit(&consumed, memory_order_relaxed);
   unsigned p = atomic_load_explicit(&produced, memory_order_acquire);
@@ -120,7 +122,7 @@ void sd_eac3_player_run(void) {
     printf("TF stopped: %s\n", eac3_result_string(result == 2 ? 0 : result));
     for (;;) {
       diagnostics();
-#if PICODAC_SD_DIAGNOSTICS
+#if PICODAC_SD_DIAGNOSTICS || PICODAC_CEC
       sleep_ms(1);
 #else
       sleep_ms(1000);
@@ -133,6 +135,11 @@ void sd_eac3_player_run(void) {
   unsigned read = 0, offset = 0;
   bool have_burst = false, reported = false;
   for (;;) {
+    if (!cec_arc_audio_allowed()) {
+      // Resume at a complete IEC 61937 burst, never in its compressed payload.
+      offset = 0;
+      diagnostics(); tight_loop_contents(); continue;
+    }
     if (!spdif_buffer_ready()) { diagnostics(); tight_loop_contents(); continue; }
     sd_diag_submit_begin();
     if (offset == 0) {

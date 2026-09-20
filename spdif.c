@@ -36,6 +36,7 @@ static uint32_t rate;
 static uint8_t depth;
 static bool stream_non_pcm;
 static bool initialized, running;
+static bool link_enabled = true, start_requested;
 // Sticky PIO flags are sampled once per block. Counts indicate affected
 // intervals, not the exact number of stalled clock cycles.
 volatile uint32_t spdif_tx_stall_count;
@@ -150,7 +151,8 @@ void spdif_init(unsigned pin, uint32_t sample_rate, uint8_t bit_depth,
 }
 
 void spdif_start(void) {
-  if (!initialized || running) return;
+  start_requested = true;
+  if (!initialized || running || !link_enabled) return;
   // Ignore flags left by initialization or the preceding stream.
   SPDIF_PIO->fdebug = 1u << (PIO_FDEBUG_TXSTALL_LSB + sm);
 #if PICODAC_OUTPUT_BOTH
@@ -174,6 +176,7 @@ void spdif_start(void) {
 }
 
 void spdif_stop(void) {
+  start_requested = false;
   if (!initialized) return;
   dma_irqn_set_channel_enabled(SPDIF_DMA_IRQ, dma_channel, false);
 #if PICODAC_OUTPUT_BOTH
@@ -215,6 +218,16 @@ void spdif_deinit(void) {
   gpio_set_dir(output_pin, GPIO_OUT);
   gpio_put(output_pin, false);
   initialized = false;
+}
+
+void spdif_set_link_enabled(bool enabled) {
+  if (link_enabled == enabled) return;
+  link_enabled = enabled;
+  if (!enabled) {
+    bool requested = start_requested;
+    spdif_stop();
+    start_requested = requested;
+  } else if (start_requested) spdif_start();
 }
 
 bool spdif_buffer_ready(void) {

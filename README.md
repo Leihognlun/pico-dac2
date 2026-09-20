@@ -6,13 +6,20 @@ This project provides firmware to enable the Raspberry Pi Pico as a USB DAC (Dig
 
 ## Features
 
+- **ARC test branch (`arc-tx-eac3`):** CEC TV at GPIO18 (physical pin 24),
+  SPDIF-to-external-ARC circuit at GPIO8. CEC is enabled by default and requires
+  SPDIF-only output; I2S is disabled. GPIO10 toggles ARC, GPIO26/27 control Soundbar
+  volume. See [CEC/ARC wiring, firmware and limitations](CEC_ARC.md).
+  This addition is not yet hardware-validated; earlier playback results below
+  refer to the non-CEC baseline. Use `PICODAC_CEC=OFF` for legacy output modes.
+
 - **Optional standalone TF-card E-AC-3 player:** Build with
   `PICODAC_INPUT=SD_EAC3` to read raw 48 kHz E-AC-3 from SPI0 microSD
   (SCLK=2, MOSI=3, MISO=4, CS=5), package IEC 61937 and output a 192 kHz
   SPDIF carrier. Default file: `0:/TRACK.EC3`. USB remains the default input;
   the standalone build does not enumerate as a USB sound card.
   See [TF wiring, build and limitations (中文)](SD_EAC3.md).
-- **Synchronized I2S + SPDIF output (default):** SPDIF GPIO 22;
+- **Optional legacy synchronized I2S + SPDIF output:** SPDIF GPIO 22;
   I2S DATA=18, BCLK=16, LRCLK=17. PCM plays on both outputs; AC-3/DTS
   plays only on SPDIF while I2S sends zeros with its clocks running.
   Stereo 44.1/48/88.2/96 kHz,
@@ -76,7 +83,7 @@ Build the firmware using standard CMake build procedures.
 ```bash
 mkdir build
 cd build
-cmake .. -DPICODAC_OUTPUT=BOTH -DPICODAC_SPDIF_PIN=22
+cmake .. -DPICODAC_CEC=OFF -DPICODAC_OUTPUT=BOTH -DPICODAC_SPDIF_PIN=22
 cmake --build .
 ```
 
@@ -116,7 +123,7 @@ set (PICODAC_I2S_BASE_CLOCK_PIN 16 CACHE STRING "I2S Base Clock Pin. LRCLK is BA
 
 1. Connect the SPDIF transmitter to GPIO 22 and GND as described in
    [SPDIF.md](SPDIF.md), or connect your I2S DAC when building with
-   `-DPICODAC_OUTPUT=I2S`. The default `BOTH` build can drive both devices.
+   `-DPICODAC_CEC=OFF -DPICODAC_OUTPUT=I2S`. A legacy `BOTH` build can drive both devices.
 2. Connect the Pico with the flashed firmware to a host (e.g., PC) via USB.
 3. The host OS will automatically recognize a new audio output device named `mdac_adc2` (or similar).
 4. Select this device as the output in your OS sound settings and play music or other audio.

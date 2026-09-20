@@ -24,9 +24,12 @@ option(PICODAC_SD_DIAGNOSTICS "Nonblocking UART0 SD playback diagnostics" OFF)
 option(PICODAC_SD_UART_LOG "Enable UART log output in SD mode" ON)
 
 # user configurations
-set(PICODAC_OUTPUT "BOTH" CACHE STRING "Audio output: BOTH, SPDIF or I2S")
+option(PICODAC_CEC "TV CEC / ARC control" ON)
+option(PICODAC_DDC "Read-only EDID on I2C1 SDA=GP6 SCL=GP7" ${PICODAC_CEC})
+set(PICODAC_CEC_PIN 18 CACHE STRING "CEC open-drain GPIO")
+set(PICODAC_OUTPUT "SPDIF" CACHE STRING "Audio output: BOTH, SPDIF or I2S")
 set_property(CACHE PICODAC_OUTPUT PROPERTY STRINGS BOTH SPDIF I2S)
-set(PICODAC_SPDIF_PIN 22 CACHE STRING "SPDIF output GPIO")
+set(PICODAC_SPDIF_PIN 8 CACHE STRING "SPDIF output GPIO")
 if(NOT PICODAC_OUTPUT MATCHES "^(BOTH|SPDIF|I2S)$")
     message(FATAL_ERROR "PICODAC_OUTPUT must be BOTH, SPDIF or I2S")
 endif()
@@ -101,6 +104,38 @@ endif()
 
 
 
+if(PICODAC_CEC)
+    if(NOT PICODAC_OUTPUT STREQUAL "SPDIF")
+        message(FATAL_ERROR "CEC/ARC build requires SPDIF-only output (GP18 reserved for CEC)")
+    endif()
+    if(NOT PICODAC_CEC_PIN MATCHES "^([2-8]|1[5-9]|2[0-2])$" OR
+       PICODAC_CEC_PIN EQUAL PICODAC_SPDIF_PIN)
+        message(FATAL_ERROR "CEC GPIO conflicts with audio/UART/buttons/LEDs or is not exposed")
+    endif()
+    if(PICODAC_INPUT STREQUAL "SD_EAC3")
+        foreach(sd_pin IN LISTS sd_pins)
+            if(PICODAC_CEC_PIN EQUAL sd_pin)
+                message(FATAL_ERROR "CEC GPIO conflicts with TF SPI")
+            endif()
+        endforeach()
+    endif()
+endif()
+
+if(PICODAC_DDC)
+    foreach(ddc_pin 6 7)
+        if((PICODAC_CEC AND PICODAC_CEC_PIN EQUAL ddc_pin) OR
+           (NOT PICODAC_OUTPUT STREQUAL "I2S" AND PICODAC_SPDIF_PIN EQUAL ddc_pin) OR
+           (NOT PICODAC_OUTPUT STREQUAL "SPDIF" AND
+            (PICODAC_I2S_DATA_PIN EQUAL ddc_pin OR PICODAC_I2S_BASE_CLOCK_PIN EQUAL ddc_pin OR
+             PICODAC_I2S_LRCLK_PIN EQUAL ddc_pin)))
+            message(FATAL_ERROR "DDC GPIO ${ddc_pin} conflicts with CEC/audio")
+        endif()
+        if(PICODAC_INPUT STREQUAL "SD_EAC3" AND ddc_pin IN_LIST sd_pins)
+            message(FATAL_ERROR "DDC GPIO ${ddc_pin} conflicts with TF SPI")
+        endif()
+    endforeach()
+endif()
+
 if(BOARD_NAME STREQUAL "rp2040")
 
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
@@ -133,6 +168,16 @@ endif()
         main.c
         blink.c
     )
+    target_compile_definitions(mdac_adc2 PRIVATE PICODAC_CEC=$<BOOL:${PICODAC_CEC}>)
+    target_compile_definitions(mdac_adc2 PRIVATE PICODAC_DDC=$<BOOL:${PICODAC_DDC}>)
+    if(PICODAC_DDC)
+        target_sources(mdac_adc2 PRIVATE ddc_edid.c ddc_edid_data.c)
+        target_link_libraries(mdac_adc2 pico_i2c_slave hardware_i2c)
+    endif()
+    if(PICODAC_CEC)
+        target_sources(mdac_adc2 PRIVATE cec_wire.c cec_tv.c cec_arc.c)
+        target_compile_definitions(mdac_adc2 PRIVATE PICODAC_CEC_PIN=${PICODAC_CEC_PIN})
+    endif()
     if(PICODAC_INPUT STREQUAL "SD_EAC3")
         include(FetchContent)
         FetchContent_Declare(pico_fatfs

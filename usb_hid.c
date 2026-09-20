@@ -22,6 +22,10 @@ static uint32_t media_sent_at;
 static uint32_t led_commands;
 
 static void sample_buttons(void) {
+  // In ARC builds these physical keys control the Soundbar, not the USB host.
+#if PICODAC_CEC
+  stable_buttons = 0; return;
+#endif
   uint32_t now = time_us_32();
   for (unsigned i = 0; i < 3; ++i) {
     uint8_t bit = 1u << i;
@@ -39,7 +43,13 @@ static bool set_led_report(const uint8_t *buf, uint16_t len) {
   if (!buf || len != HID_OUT_PACKET_SIZE || buf[0] != HID_REPORT_LEDS ||
       (buf[1] & 0xF8)) return false;
   led_mask = buf[1];
+#if PICODAC_CEC
+  led_mask &= 3u; // GP26 is the ARC volume-up input, not LED3.
+#endif
   for (unsigned i = 0; i < 3; ++i)
+#if PICODAC_CEC
+    if (i != 2)
+#endif
     gpio_put(led_pins[i], !!(led_mask & (1u << i)));
   ++led_commands;
   return true;
@@ -179,11 +189,17 @@ void usb_hid_init() {
     gpio_pull_up(button_pins[i]);
   }
   for (unsigned i = 0; i < 3; ++i) {
+#if PICODAC_CEC
+    if (i == 2) continue; // Keep GP26 as the CEC button input.
+#endif
     gpio_init(led_pins[i]);
     gpio_put(led_pins[i], false);
     gpio_set_dir(led_pins[i], GPIO_OUT);
   }
   for (unsigned i = 0; i < 3; ++i) {
+#if PICODAC_CEC
+    if (i == 2) continue;
+#endif
     gpio_init(led_pins_n[i]);
     gpio_put(led_pins_n[i], false);
     gpio_set_dir(led_pins_n[i], GPIO_OUT);

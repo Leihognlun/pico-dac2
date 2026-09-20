@@ -29,6 +29,14 @@ static int32_t output[384];
 static bool started, acquired;
 static unsigned data_offset, played, trailing;
 static atomic_bool underrun_seen;
+#if PICODAC_CEC
+static bool arc_gate, arc_paused;
+static unsigned arc_wait = 5;
+bool cec_arc_audio_allowed(void) { return arc_gate; }
+void cec_arc_task(void) {
+  if (!arc_gate && arc_wait && !--arc_wait) arc_gate = true;
+}
+#endif
 static void (*core_entry)(void);
 #ifdef _WIN32
 static HANDLE core_thread;
@@ -88,6 +96,14 @@ void spdif_init(unsigned pin, uint32_t rate, uint8_t depth, bool non_pcm) {
 void spdif_start(void) { started = true; }
 bool spdif_buffer_ready(void) {
   assert(started && !acquired);
+#if PICODAC_CEC
+  assert(arc_gate);
+  if (scenario == 6 && played == 1 && data_offset == 768 && !arc_paused) {
+    arc_paused = true; arc_gate = false; arc_wait = 5;
+    data_offset = 0; // stopped DMA: next output must restart a complete burst
+    return false;
+  }
+#endif
   sleep_ms(1);
   acquired = true;
   return true;
@@ -145,5 +161,8 @@ int main(int argc, char **argv) {
   }
   assert(sd_eac3_bursts_played == played);
   if (scenario == 5) assert(sd_eac3_underruns > 0);
+#if PICODAC_CEC
+  assert(arc_paused && arc_gate);
+#endif
   puts("PASS: threaded TF reader -> complete IEC61937 bursts -> SPDIF consumer, EOF/error drain");
 }

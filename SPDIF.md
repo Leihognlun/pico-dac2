@@ -1,6 +1,14 @@
 # SPDIF 输出
 
-工程默认构建 **I2S + SPDIF 双输出**（`PICODAC_OUTPUT=BOTH`）。
+新增 DDC EDID：I2C1 从设备 `0x50`，GPIO6=SDA、GPIO7=SCL，原样内置用户提供的
+256 字节 EDID；接线、电平转换和读取方式见 [DDC/EDID 说明](CEC_ARC.md#ddc--edid-从设备)。
+
+`arc-tx-eac3` 分支默认启用 **CEC TV / ARC TX**：SPDIF 改为 GPIO8，CEC 为
+**GPIO18（Pico 物理脚 24，不是物理脚 18）**，默认 `PICODAC_OUTPUT=SPDIF`，
+关闭占用 GPIO18 的 I2S。接线、ARC 开关、Soundbar 音量及测试固件见 [CEC/ARC 说明](CEC_ARC.md)。
+本分支的新 CEC 固件尚未经过实机验证；下文实测记录属于此前无 CEC 的版本。
+
+原 **I2S + SPDIF 双输出**仍可通过 `PICODAC_CEC=OFF`、`PICODAC_OUTPUT=BOTH` 构建。
 PCM 同时输出；AC-3/DTS 透传只送到 SPDIF，I2S 保持时钟并发送零样本。
 也可选择 `SPDIF` 或 `I2S` 单输出模式。
 
@@ -57,7 +65,7 @@ TrueHD Atmos 也已验证。USB 描述符仍声明 AC-3 和 DTS-I/II/III，
 在工程目录执行：
 
 ```powershell
-cmake -S . -B build -DPICODAC_OUTPUT=BOTH -DPICODAC_SPDIF_PIN=22
+cmake -S . -B build -DPICODAC_CEC=OFF -DPICODAC_OUTPUT=BOTH -DPICODAC_SPDIF_PIN=22
 cmake --build build -j 4
 ```
 
@@ -74,7 +82,7 @@ Windows 工程已配置 Pico SDK 2.3.1 和 SDK 配套 Ninja v1.13.2。
 切回 I2S：
 
 ```powershell
-cmake -S . -B build -DPICODAC_OUTPUT=I2S
+cmake -S . -B build -DPICODAC_CEC=OFF -DPICODAC_OUTPUT=I2S
 cmake --build build -j 4
 ```
 

@@ -17,6 +17,9 @@ def main():
     subprocess.run([sys.executable, str(root / "tests/media_controls_test.py")], check=True)
     common = [args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", str(root)]
     cases = [
+        ("ddc", ["-I", str(root / "tests/ddc_stubs"), "-DPICODAC_DDC=1"],
+         ["tests/ddc_test.c", "ddc_edid.c", "ddc_edid_data.c"]),
+        ("cec", [], ["tests/cec_test.c", "cec_tv.c", "cec_wire.c"]),
         ("sd_diagnostics", ["-I", str(root / "tests/sd_stubs"), "-DPICODAC_SD_DIAGNOSTICS=1"],
          ["tests/sd_diagnostics_test.c", "sd_diagnostics.c"]),
         ("eac3_burst", [], ["tests/eac3_burst_test.c", "eac3_burst.c", "spdif_encode.c"]),
@@ -57,6 +60,11 @@ def main():
                                     "eac3_burst.c", "-o", str(binary)], cwd=root, check=True)
     for scenario in range(6):
         subprocess.run([str(binary), str(scenario)], cwd=root, check=True, timeout=15)
+    arc_binary = build / ("sd_arc.exe" if os.name == "nt" else "sd_arc")
+    subprocess.run(common + flags + ["-DPICODAC_CEC=1", "tests/sd_player_test.c",
+                                    "sd_eac3_player.c", "eac3_burst.c", "-o", str(arc_binary)],
+                   cwd=root, check=True)
+    subprocess.run([str(arc_binary), "6"], cwd=root, check=True, timeout=15)
 
 
 if __name__ == "__main__":
