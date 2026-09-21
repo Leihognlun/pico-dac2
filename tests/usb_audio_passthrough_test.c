@@ -82,6 +82,8 @@ void spdif_submit_buffer(void) {
   }
   assert(status[0][0] == (non_pcm ? 6 : 4));
   assert(status[1][0] == status[0][0]);
+  assert(status[0][2] == (non_pcm ? 0 : 0x10));
+  assert(status[1][2] == (non_pcm ? 0 : 0x20));
 }
 
 void blink_set_period_us(uint32_t us) { (void)us; }

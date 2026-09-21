@@ -27,7 +27,11 @@ int main() {
 
   stdio_init_all();
 
-  blink_init(pio1, PICO_DEFAULT_LED_PIN);
+  blink_init(pio1, 25); // RP-ZERO-C1 green status LED, active high
+#if PICODAC_INPUT_SD
+  // ARC is not established at boot: one second on, one second off.
+  blink_set_period_us(2000000);
+#endif
   ddc_edid_init();
   cec_arc_init();
 #if PICODAC_INPUT_SD

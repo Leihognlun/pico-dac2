@@ -68,10 +68,10 @@ static void check(unsigned page, uint32_t a, uint32_t b, uint32_t c) {
 }
 int main(void) {
   usb_hid_init();
-  assert(pins[10] && pins[13] && pins[27]);
-  assert(!outputs[10] && !outputs[13] && !outputs[27]);
-  assert(outputs[9] && outputs[12] && outputs[26]);
-  assert(!pins[9] && !pins[12] && !pins[26] && !initialized[20]);
+  assert(pins[10] && pins[13] && pins[21]);
+  assert(!outputs[10] && !outputs[13] && !outputs[21]);
+  assert(outputs[9] && outputs[12] && outputs[20]);
+  assert(!pins[9] && !pins[12] && !pins[20]);
   assert(select_interface(0));
   assert(last_len == 2 && last[0] == 2 && last[1] == 0);
   next_report();
@@ -89,19 +89,19 @@ int main(void) {
   now = 40999; next_report(); assert(last[0] == 1);
   now = 41000; next_report(); assert(last_len == 2 && last[0] == 2 && last[1] == 1);
   now += 10000; next_report(); assert(last[0] == 1); // Held key: no extra press.
-  pins[10] = true; pins[13] = pins[27] = false; next_report();
+  pins[10] = true; pins[13] = pins[21] = false; next_report();
   now += 20000; next_report(); assert(last[0] == 2 && last[1] == 6);
-  pins[13] = pins[27] = true; next_report();
+  pins[13] = pins[21] = true; next_report();
   now += 20000; next_report(); assert(last[0] == 2 && last[1] == 0);
   // Interrupt OUT and EP0 SET_REPORT use the same validated LED report.
   uint8_t leds[] = {3, 5}; led_out(leds, 2);
-  assert(pins[9] && !pins[12] && pins[26]);
-  leds[1] = 8; led_out(leds, 2); assert(pins[9] && pins[26]);
+  assert(pins[9] && !pins[12] && pins[20]);
+  leds[1] = 8; led_out(leds, 2); assert(pins[9] && pins[20]);
   leds[1] = 2;
   struct usb_setup_packet_t pkt = {0x21, 9, 0x0203, INTERFACE_HID, 2};
   assert(!control_out(&pkt, leds, 1));
   assert(control_out(&pkt, leds, 2));
-  assert(!pins[9] && pins[12] && !pins[26]);
+  assert(!pins[9] && pins[12] && !pins[20]);
   pkt.wIndex++; assert(!control_out(&pkt, leds, 2)); pkt.wIndex--;
   pkt.bmRequestType = 0xA1; pkt.bRequest = 1;
   assert(control_in(&pkt)); assert(last_len == 2 && last[0] == 3 && last[1] == 2);
@@ -121,8 +121,8 @@ int main(void) {
     assert(control_out(&pkt, feature, 6));
     assert(pins[9] == !!(masks[i] & 1));
     assert(pins[12] == !!(masks[i] & 2));
-    assert(pins[26] == !!(masks[i] & 4));
-    assert(!pins[11] && !pins[14] && !pins[28]);
+    assert(pins[20] == !!(masks[i] & 4));
+    assert(!pins[11] && !pins[14] && !pins[22]);
     pkt.bmRequestType = 0xA1; pkt.bRequest = 1;
     assert(control_in(&pkt));
     assert(last_len == 6 && last[0] == 4 && last[1] == masks[i]);

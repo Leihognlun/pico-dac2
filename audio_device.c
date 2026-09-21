@@ -13,8 +13,6 @@
 //--------------------------------------------------------------------+/
 
 // --- Configuration ---
-#define I2S_DATA_PIN PICODAC_I2S_DATA_PIN
-#define I2S_CLOCK_PIN_BASE PICODAC_I2S_BASE_CLOCK_PIN  // LRCLK = BASE + 1
 #define SAFE_WATER_LEVEL 0.5
 #define UNDERRUN_WATER_LEVEL 0.16
 #define RECOVERY_WATER_LEVEL 0.4
@@ -98,8 +96,8 @@ void audio_device_init(void) {
 
   // --- Audio output configuration ---
   audio_output_config = (audio_output_config_t){
-      .data_pin = I2S_DATA_PIN,
-      .clock_pin_base = I2S_CLOCK_PIN_BASE,
+      .data_pin = PICODAC_SPDIF_PIN,
+      .clock_pin_base = 0,
       .pio_instance = PIO,
       .bit_depth = current_bit_depth,
       .buffer_frames = current_sample_rate / 1000,
@@ -278,8 +276,8 @@ void audio_device_stream_start(uint8_t bit_depth, bool non_pcm) {
   audio_output_deinit(&audio_output_config);
   // --- Audio output configuration ---
   audio_output_config = (audio_output_config_t){
-      .data_pin = I2S_DATA_PIN,
-      .clock_pin_base = I2S_CLOCK_PIN_BASE,
+      .data_pin = PICODAC_SPDIF_PIN,
+      .clock_pin_base = 0,
       .bit_depth = bit_depth,
       .pio_instance = PIO,
       .buffer_frames = current_sample_rate / 1000,

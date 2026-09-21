@@ -29,10 +29,20 @@ static int32_t output[384];
 static bool started, acquired;
 static unsigned data_offset, played, trailing;
 static atomic_bool underrun_seen;
+static bool gpio_values[30];
+static uint32_t fake_time;
+uint32_t time_us_32(void){return fake_time+=1000;}
+void gpio_init(unsigned pin) {(void)pin;}
+void gpio_set_dir(unsigned pin,int out){(void)pin;(void)out;}
+void gpio_pull_up(unsigned pin){gpio_values[pin]=true;}
+void gpio_put(unsigned pin,int value){gpio_values[pin]=value;}
+int gpio_get(unsigned pin){return gpio_values[pin];}
 #if PICODAC_CEC
 static bool arc_gate, arc_paused;
 static unsigned arc_wait = 5;
 bool cec_arc_audio_allowed(void) { return arc_gate; }
+void cec_arc_set_enabled(bool enabled) {(void)enabled;}
+void cec_arc_volume_key(bool up, bool pressed) {(void)up;(void)pressed;}
 void cec_arc_task(void) {
   if (!arc_gate && arc_wait && !--arc_wait) arc_gate = true;
 }
@@ -90,10 +100,14 @@ FRESULT f_read(FIL *file, void *buffer, UINT size, UINT *count) {
   return FR_OK;
 }
 FRESULT f_close(FIL *file) { (void)file; return FR_OK; }
+FRESULT f_opendir(DIR*d,const char*p){(void)d;(void)p;return 1;}
+FRESULT f_readdir(DIR*d,FILINFO*f){(void)d;f->fname[0]=0;return FR_OK;}
+FRESULT f_closedir(DIR*d){(void)d;return FR_OK;}
 void spdif_init(unsigned pin, uint32_t rate, uint8_t depth, bool non_pcm) {
   assert(pin == 22 && rate == 192000 && depth == 16 && non_pcm);
 }
 void spdif_start(void) { started = true; }
+void spdif_deinit(void) { started = false; }
 bool spdif_buffer_ready(void) {
   assert(started && !acquired);
 #if PICODAC_CEC

@@ -48,7 +48,8 @@ static void check_block(const int32_t *pcm, unsigned depth, unsigned rate,
   }
   for (unsigned channel = 0; channel < 2; ++channel) {
     assert(status[channel][0] == (non_pcm ? 6 : 4));
-    assert(status[channel][1] == 0 && status[channel][2] == 0);
+    assert(status[channel][1] == 0);
+    assert(status[channel][2] == (non_pcm ? 0 : (channel + 1) << 4));
     assert(status[channel][3] == code);
     assert(status[channel][4] == (depth == 16 ? 2 : 11));
     for (unsigned byte = 5; byte < 24; ++byte) assert(status[channel][byte] == 0);

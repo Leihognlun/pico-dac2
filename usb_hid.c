@@ -12,9 +12,9 @@
 #include "usb.h"
 #include "usb_config.h"
 
-static const uint8_t button_pins[] = {10, 13, 27};
-static const uint8_t led_pins[] = {9, 12, 26};
-static const uint8_t led_pins_n[] = {11, 14, 28};
+static const uint8_t button_pins[] = {10, 13, 21};
+static const uint8_t led_pins[] = {9, 12, 20};
+static const uint8_t led_pins_n[] = {11, 14, 22};
 static uint8_t raw_buttons, stable_buttons, sent_buttons, led_mask;
 static uint32_t changed_at[3];
 static uint8_t idle_rate[4];
@@ -44,12 +44,9 @@ static bool set_led_report(const uint8_t *buf, uint16_t len) {
       (buf[1] & 0xF8)) return false;
   led_mask = buf[1];
 #if PICODAC_CEC
-  led_mask &= 3u; // GP26 is the ARC volume-up input, not LED3.
+  led_mask &= 7u;
 #endif
   for (unsigned i = 0; i < 3; ++i)
-#if PICODAC_CEC
-    if (i != 2)
-#endif
     gpio_put(led_pins[i], !!(led_mask & (1u << i)));
   ++led_commands;
   return true;
@@ -189,17 +186,11 @@ void usb_hid_init() {
     gpio_pull_up(button_pins[i]);
   }
   for (unsigned i = 0; i < 3; ++i) {
-#if PICODAC_CEC
-    if (i == 2) continue; // Keep GP26 as the CEC button input.
-#endif
     gpio_init(led_pins[i]);
     gpio_put(led_pins[i], false);
     gpio_set_dir(led_pins[i], GPIO_OUT);
   }
   for (unsigned i = 0; i < 3; ++i) {
-#if PICODAC_CEC
-    if (i == 2) continue;
-#endif
     gpio_init(led_pins_n[i]);
     gpio_put(led_pins_n[i], false);
     gpio_set_dir(led_pins_n[i], GPIO_OUT);

@@ -30,6 +30,14 @@ void cec_tv_task(cec_tv_t *t, uint32_t now) {
     }
     return;
   }
+  if (!t->soundbar_present) {
+    if (!t->soundbar_polling && (int32_t)(now - t->retry_at) >= 0) {
+      cec_frame_t poll = {.data = {0x05}, .len = 1,
+                          .tag = CEC_TAG_POLL_AUDIO};
+      if (t->send(t->ctx, &poll)) t->soundbar_polling = true;
+    }
+    return;
+  }
   if ((t->arc == CEC_ARC_REQUESTED || t->arc == CEC_ARC_REPORTING ||
        t->arc == CEC_ARC_STOPPING) && (int32_t)(now - t->deadline) >= 0) {
     t->arc = CEC_ARC_OFF; t->retry_at = now + 5000000;
@@ -62,6 +70,14 @@ void cec_tv_tx_result(cec_tv_t *t, uint8_t tag, unsigned result, uint32_t now) {
       const uint8_t physical[] = {0, 0, 0};
       send(t, 15, 0x84, physical, 3, 0);
     } else t->retry_at = now + 2000000;
+  } else if (tag == CEC_TAG_POLL_AUDIO) {
+    t->soundbar_polling = false;
+    if (result == CEC_TX_OK) {
+      t->soundbar_present = true;
+      t->retry_at = now;
+    } else {
+      t->retry_at = now + 2000000;
+    }
   } else if (tag == CEC_TAG_ENABLE && t->arc == CEC_ARC_REPORTING) {
     t->arc = result == CEC_TX_OK && t->desired ? CEC_ARC_ON : CEC_ARC_OFF;
     t->retry_at = now + 5000000;
@@ -73,6 +89,11 @@ void cec_tv_receive(cec_tv_t *t, const cec_frame_t *f, uint32_t now) {
   if (!t->registered || f->len < 2 || f->len > 16) return;
   unsigned src = f->data[0] >> 4, dst = f->data[0] & 15, op = f->data[1];
   if (src == 0 || (dst != 0 && dst != 15)) return;
+  if (src == 5) {
+    t->soundbar_present = true;
+    t->soundbar_polling = false;
+    if (t->desired && t->arc == CEC_ARC_OFF) t->retry_at = now;
+  }
   const uint8_t *args = f->data + 2;
   unsigned n = f->len - 2;
   // ARC control is directed and only accepted from the Audio System.

@@ -33,13 +33,20 @@ void spdif_encode_block(uint32_t *out, const int32_t *pcm,
   assert(!non_pcm || bit_depth == 16);
   // Consumer, copying permitted, general category. Channel-status bit 1
   // identifies IEC 61937 compressed data (never interpret it as PCM).
+  // Byte 2 high nibble is the IEC 60958 channel number.  Mark linear PCM
+  // explicitly as channel 1 (left) and channel 2 (right); some ARC sinks
+  // route an unspecified second subframe as a surround channel.  IEC 61937
+  // bursts keep the channel number unspecified because both subframes form
+  // one compressed-data carrier.
   // Byte 3: sample frequency; byte 4: 16 or 24 significant bits.
-  const uint8_t status[24] = {
-      non_pcm ? 0x06 : 0x04, 0x00, 0x00, frequency_code(sample_rate),
-      bit_depth == 16 ? 0x02 : 0x0b};
+  const uint8_t status[2][24] = {
+      {non_pcm ? 0x06 : 0x04, 0x00, non_pcm ? 0x00 : 0x10,
+       frequency_code(sample_rate), bit_depth == 16 ? 0x02 : 0x0b},
+      {non_pcm ? 0x06 : 0x04, 0x00, non_pcm ? 0x00 : 0x20,
+       frequency_code(sample_rate), bit_depth == 16 ? 0x02 : 0x0b}};
   for (unsigned frame = 0; frame < SPDIF_BLOCK_FRAMES; ++frame) {
-    unsigned c = (status[frame / 8] >> (frame % 8)) & 1u;
     for (unsigned channel = 0; channel < 2; ++channel) {
+      unsigned c = (status[channel][frame / 8] >> (frame % 8)) & 1u;
       uint32_t sample = pcm ? (uint32_t)*pcm++ : 0;
       if (bit_depth == 16) sample <<= 8;
       if (bit_depth == 32) sample >>= 8;

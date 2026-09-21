@@ -2,10 +2,14 @@
 #include "cec_wire.h"
 typedef bool (*cec_send_fn)(void *ctx, const cec_frame_t *frame);
 enum { CEC_ARC_OFF, CEC_ARC_REQUESTED, CEC_ARC_REPORTING, CEC_ARC_ON, CEC_ARC_STOPPING };
-enum { CEC_TAG_NORMAL, CEC_TAG_POLL_TV, CEC_TAG_ENABLE, CEC_TAG_DISABLE };
+enum {
+  CEC_TAG_NORMAL, CEC_TAG_POLL_TV, CEC_TAG_POLL_AUDIO,
+  CEC_TAG_ENABLE, CEC_TAG_DISABLE
+};
 typedef struct {
   cec_send_fn send; void *ctx;
-  bool registered, conflict, polling, desired, system_audio, muted;
+  bool registered, conflict, polling, soundbar_present, soundbar_polling;
+  bool desired, system_audio, muted;
   uint8_t arc, volume, key, sent_key;
   uint32_t deadline, retry_at, key_at;
 } cec_tv_t;

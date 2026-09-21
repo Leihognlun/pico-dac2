@@ -27,7 +27,12 @@ static void controller(void) {
   cec_tv_tx_result(&tv, CEC_TAG_POLL_TV, CEC_TX_NACK, 1100000);
   assert(tv.registered && sent[1].data[1] == 0x84 && sent[1].len == 5);
   cec_tv_task(&tv, 1100000);
-  assert(sent[2].data[1] == 0x70 && sent[3].data[1] == 0xc3);
+  assert(count == 3 && sent[2].len == 1 && sent[2].data[0] == 0x05);
+  assert(tv.soundbar_polling && !tv.soundbar_present);
+  cec_tv_tx_result(&tv, CEC_TAG_POLL_AUDIO, CEC_TX_OK, 1150000);
+  assert(tv.soundbar_present && !tv.soundbar_polling);
+  cec_tv_task(&tv, 1150000);
+  assert(sent[3].data[1] == 0x70 && sent[4].data[1] == 0xc3);
   assert(tv.arc == CEC_ARC_REQUESTED);
   receive(&tv, 0x40, 0xc0, 1200000); assert(tv.arc == CEC_ARC_REQUESTED);
   receive(&tv, 0x5f, 0xc0, 1200000); assert(tv.arc == CEC_ARC_REQUESTED);

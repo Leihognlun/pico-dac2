@@ -1,77 +1,74 @@
 # 程序运行逻辑与外设配置
 
-日期：2026-09-18。范围：`arc-tx-eac3` 分支当前 CEC、DDC、TF 与 USB 实现。
-本文描述软件逻辑，不代表所有功能已通过 Soundbar 实机验证。
-流程图采用 Mermaid；查看时需要支持 Mermaid 的 Markdown 预览器。
+更新日期：2026-09-20。范围：`dev-zero-c1` 分支、RP-ZERO-C1 / RP2040 当前工作区代码。
+本文描述实际实现；需求与实现尚不一致的部分见第 9 节。流程图需要支持 Mermaid 的 Markdown 预览器。
 
-## 1. 总体结构
+## 1. 总体结构与构建模式
 
-程序分为三条相对独立的链路：
-
-- 音频：TF 或 USB → 音频缓冲 → SPDIF → 外部 ARC 电路。
-- 控制：CEC → ARC 开关、Soundbar 音量。
-- 信息：DDC → Soundbar 读取内置 EDID。
-
-**DDC 被读取不会直接开启音频；CEC 握手成功也不意味着已有音频数据。**
+TF 或 USB 音频经 SPDIF 编码、DMA 和 PIO，从 GPIO16 输出，再由外部电路转换为 ARC TX。
+CEC 负责 ARC 握手与 Soundbar 音量控制，DDC 提供只读 EDID。
+读取 EDID、建立 ARC 链路、存在可播放音频是三个不同条件。
 
 ```mermaid
 flowchart TB
-    subgraph INPUT[音频输入：编译时二选一]
-        TF[TF 卡 / SPI0 / 裸 EAC3]
-        USB[USB 主机 / PCM 或 IEC 61937]
-    end
-    TF --> READER[Core1：FatFs 读取、解析和封装]
-    READER --> BQ[4 槽完整 burst 队列]
-    BQ --> SD[Core0：TF 播放循环]
-    USB --> USBIRQ[USB 中断：保存数据包快照]
-    USBIRQ --> USBTASK[Core0：USB 事件处理]
-    USBTASK --> RB[音频环形缓冲]
-    RB --> AUDIO[Core0：音频状态机]
-    SD --> ENC[SPDIF 编码：每块 192 个双声道帧]
-    AUDIO --> ENC
-    ENC --> DMA[输出双缓冲队列 → DMA]
-    DMA --> PIO[PIO0 → GPIO8]
-    PIO --> ARC[外部 SPDIF → ARC 电路]
-    ARC --> SB[Soundbar]
-    KEYS[GP10 开关 / GP26 加 / GP27 减] --> CEC[Core0：CEC TV 状态机]
-    CEC <--> WIRE[50 us 定时回调：CEC 位级收发]
-    WIRE <-->|GPIO18| SB
-    CEC -.->|允许或关闭载波| DMA
-    SB -->|DDC 主机读取| I2C[I2C1 从设备 0x50 / GP6、GP7]
-    EDID[Flash 中只读 EDID：256 字节] --> I2C
-    I2C -->|返回 EDID| SB
+    TF[TF：WAV / AC3 / EAC3] --> C1[Core1：FatFs 读取、解析、封装]
+    C1 --> Q[四槽完整音频单元队列]
+    Q --> C0[Core0：TF 播放循环]
+    KEYS[四键及 LED] --> C0
+    KEYS --> VOL[CEC 音量键]
+    USB[USB Audio] --> RB[USB 事件队列及音频环形缓冲]
+    RB --> AUDIO[audio_device 状态机]
+    C0 --> SPDIF[SPDIF 编码：192 个双声道帧一块]
+    AUDIO --> SPDIF
+    SPDIF --> DMA[双缓冲 / DMA / PIO0]
+    DMA --> ARC[GPIO16 → 外部 ARC TX 电路]
+    VOL --> CEC[CEC 状态机 / GPIO19]
+    CEC -.->|链路许可| DMA
+    DET[GPIO17：HDMI 5V 检测] --> CEC
+    DET --> HPD[GPIO18：低有效 HPD]
+    EDID[256 字节只读 EDID] --> DDC[I2C1 / GPIO6、7 / 地址 0x50]
 ```
 
-没有 FreeRTOS：采用主循环、中断与 PIO/DMA；只有 TF 模式启动 Core1。
-TF 与 USB 是不同构建，不是运行时自动切换。
+没有 FreeRTOS，使用主循环、中断、PIO/DMA；只有 TF 模式启动 Core1。
+TF 和 USB 在编译时二选一，不是运行时切换。
 
-## 2. 外设配置
+| 配置项 | 当前含义 |
+| --- | --- |
+| `PICODAC_INPUT=USB` | 默认 USB 声卡模式 |
+| `PICODAC_INPUT=SD_AUDIO` | TF 文件播放，定义 `PICODAC_INPUT_SD=1` |
+| `PICODAC_INPUT=SD_EAC3` | 兼容旧参数，配置时映射为 SD_AUDIO |
+| `PICODAC_OUTPUT` | CMake 固定为 SPDIF |
+| `PICODAC_SD_FILE` | 默认 `0:/TRACK.WAV`，目录扫描无候选时的后备路径 |
+| `PICODAC_CEC` / `PICODAC_DDC` | CEC 默认开启，DDC 默认跟随 CEC 配置 |
+| `PICODAC_SD_DIAGNOSTICS` | 默认关闭，可开启非阻塞 UART 诊断 |
+| `PICODAC_SD_UART_LOG` | 默认开启，可关闭 TF stdio UART 日志 |
 
-下表编号均为 GPIO 编号，而非 Pico 物理引脚编号。
+I2S 历史源码仍在仓库，但目标不编译 I2S/BOTH，固定
+`PICODAC_OUTPUT_SPDIF=1`、`PICODAC_OUTPUT_BOTH=0`。
 
-| 模块 | 当前配置 | 执行位置或用途 |
+## 2. RP-ZERO-C1 引脚与外设
+
+编号均为 GPIO 编号，不是物理脚编号。
+
+| 功能 | GPIO / 配置 | 用途 |
 | --- | --- | --- |
-| 系统时钟 | TF 120 MHz；USB 132 MHz | `main()` 启动时设置 |
-| TF SPI | SPI0；SCLK=GP2、MOSI=GP3、MISO=GP4、CS=GP5 | Core1 读卡 |
-| TF SPI 速率 | 初始化配置 100 kHz；正常传输配置 12 MHz | TF 驱动使用 |
-| DDC | I2C1 从设备；SDA=GP6、SCL=GP7；7 位地址 0x50 | I2C 中断处理 |
-| DDC 时钟 | 初始化参数 100 kHz；总线实际时钟由主机提供 | 支持硬件时钟拉伸 |
-| DDC 上拉 | 内部上拉关闭 | 外部上拉、电平转换 |
-| SPDIF | PIO0，GPIO8，动态申请状态机 | 外部 ARC 转换电路输入 |
-| SPDIF DMA | 动态申请通道；32 位传输；PIO TX DREQ | 源地址递增，目标固定为 TX FIFO |
-| DMA 中断 | DMA_IRQ_1，最高中断优先级 | 完成一块后接续下一块 |
-| CEC | GP18，开漏式输出，无内部上拉 | 拉低或切为输入释放总线 |
-| CEC 定时 | 每 50 μs 回调 | 收发时序、采样、ACK |
-| ARC 开关键 | GP10，输入上拉，低有效 | 20 ms 消抖 |
-| 音量加 / 减 | GP26 / GP27，输入上拉，低有效 | 长按约每 300 ms 重复 |
-| 板载 LED | PIO1；标准 Pico 为 GP25 | USB 音频状态指示 |
-| USB 控制 LED | GP9、GP12；GP11、GP14 配为低电平输出 | HID 控制 |
-| 原第三路 LED | GP26/GP28 不作为 LED 初始化 | 避免音量加按键冲突 |
-| UART | 当前 TF 版关闭日志输出 | 保留 SD 诊断计时、计数 |
-| I2S | 两个 ARC 构建均禁用 | GP18 已供 CEC 使用 |
+| UART0 TX / RX | 0 / 1 | 日志及可选诊断；诊断使用 115200 8N1 |
+| TF SPI0 SCK / MOSI / MISO / CS | 2 / 3 / 4 / 5 | Core1 访问 FatFs；初始化 100 kHz，正常默认 12 MHz |
+| DDC SDA / SCL | 6 / 7，均属于 I2C1 | 地址 0x50，关闭内部上拉 |
+| SPDIF / ARC TX | 16，PIO0 | 固定输出引脚，动态申请状态机 |
+| HDMI 5V Detect | 17，输入 | 高电平表示检测到 HDMI 5V，经外部电路转换电平 |
+| HDMI HPD | 18，低有效输出 | 初始化为高，任务中输出 `!hdmi_present` |
+| HDMI CEC | 19，开漏式收发 | 拉低或切为输入释放，无内部上拉 |
+| 状态 LED | 25，高有效，PIO1 | TF：ARC 未开启时亮 1 秒、灭 1 秒，开启时常亮；USB 保留音频状态显示 |
+| B1 Key / LED+ / LED− | 10 / 9 / 11 | TF 播放/停止 |
+| B2 Key / LED+ / LED− | 13 / 12 / 14 | TF 下一首 |
+| B3 Key / LED+ / LED− | 21 / 20 / 22 | CEC 音量加 |
+| B4 Key / LED+ / LED− | 27 / 26 / 28 | CEC 音量减 |
 
-PIO 状态机及 DMA 通道编号由运行时申请，不保证为 SM0 或 DMA0。
-标准 Pico 上 GP6/7/8/18/26 分别对应物理脚 9/10/11/24/31。
+TF 系统时钟为 120 MHz，USB 为 132 MHz。SPDIF 按请求采样率取整配置 PIO 分频器；
+TF 没有 USB feedback 校正环路，44.1 kHz 的实际频率受分频精度影响。
+DMA 使用动态通道、32 位传输、PIO TX DREQ 和最高优先级的 DMA_IRQ_1。
+状态机和 DMA 通道编号不固定。
 
 ## 3. 上电初始化
 
@@ -79,283 +76,246 @@ PIO 状态机及 DMA 通道编号由运行时申请，不保证为 SM0 或 DMA0�
 
 ```mermaid
 flowchart TD
-    BOOT[上电或复位] --> CLOCK[系统时钟：TF 120 MHz / USB 132 MHz]
-    CLOCK --> STDIO[stdio_init_all]
-    STDIO --> LED[blink_init：分配 PIO1 状态机]
-    LED --> DDC[ddc_edid_init：I2C1 地址 0x50]
-    DDC --> CEC[cec_arc_init]
-    CEC --> GATE[关闭 SPDIF 链路许可 / 配置 GP18]
-    GATE --> KEYS[配置三个按键 / 启动 50 us 定时回调]
-    KEYS --> MODE{编译输入模式}
-    MODE -->|SD_EAC3| SDINIT[初始化诊断 / 启动 Core1]
-    SDINIT --> PRE[Core0 等待预缓冲 / 继续处理 CEC]
-    PRE --> SDLOOP[TF 播放循环]
-    MODE -->|USB| UINIT[初始化音频缓冲、SPDIF、USB Audio、HID]
-    UINIT --> ULOOP[usb_device_task → audio_device_task → cec_arc_task]
-    ULOOP --> ULOOP
+    BOOT[上电 / 复位] --> CLOCK[设置时钟]
+    CLOCK --> INIT[初始化 stdio、GPIO25 blink、DDC]
+    INIT --> CEC[初始化 CEC、5V 检测、HPD；关闭载波许可]
+    CEC --> TIMER[启动 50 us CEC 位级定时回调]
+    TIMER --> MODE{输入构建}
+    MODE -->|SD_AUDIO| KEYS[初始化诊断、四键和 LED]
+    KEYS --> CORE[启动 Core1 读卡]
+    CORE --> PRE[Core0 等待四槽预缓冲或生产者结束]
+    PRE --> SD[TF 播放循环]
+    MODE -->|USB| USB[初始化音频缓冲、USB Audio、HID]
+    USB --> LOOP[USB task → audio task → CEC task]
+    LOOP --> LOOP
 ```
 
-DDC 早于音频输入初始化，即使 TF 挂载失败仍可读取 EDID。
-CEC 初始化关闭输出许可，避免未完成 ARC 握手就输出载波。
+CEC 开机默认请求开启 ARC。TF `playing` 标志初始为 true，因此初始化后四个按键 LED 均亮，
+预缓冲后自动请求启动 SPDIF；实际载波仍受 CEC 握手和 GPIO17 检测约束。
+DDC 先于读卡初始化，TF 失败不阻止 EDID 读取。
 
-## 4. TF 双核播放流程
+## 4. TF 文件发现、格式与双核缓冲
 
 实现：[sd_eac3_player.c](sd_eac3_player.c)。只有 Core1 访问 FatFs。
 
-```mermaid
-flowchart TD
-    subgraph CORE1[Core1：生产完整 burst]
-        SPI[配置 SPI0] --> MOUNT[挂载 FatFs]
-        MOUNT --> OPEN[打开 0:/TRACK.EC3]
-        OPEN --> FULL{4 槽队列已满？}
-        FULL -->|是| WAIT[sleep_us 100 等待]
-        WAIT --> FULL
-        FULL -->|否| READ[8192 字节缓存读取文件]
-        READ --> PACK[解析 EAC3 / 生成 IEC 61937 burst]
-        PACK --> RESULT{解析结果}
-        RESULT -->|完整 burst| PUB[发布 produced 计数]
-        PUB --> FULL
-        RESULT -->|EOF 或错误| END[关闭文件、卸载 / 发布 producer_result]
-    end
-    PUB --> QUEUE[共享队列：4 × 24576 字节]
-    subgraph CORE0[Core0：消费与输出]
-        PRE[等待 4 槽或生产者结束] --> ANY{存在完整 burst？}
-        ANY -->|否| IDLE[记录状态 / 持续处理 CEC 与诊断]
-        ANY -->|是| INIT[初始化 SPDIF：192 kHz、16 bit、Non-PCM / 请求启动]
-        INIT --> GATE{CEC 允许 ARC？}
-        GATE -->|否| HOLD[不消费队列 / burst 偏移归零 / 处理 CEC 与诊断]
-        HOLD --> GATE
-        GATE -->|是| READY{有可写 SPDIF 块？}
-        READY -->|否| TASK[处理 CEC 与诊断]
-        TASK --> GATE
-        READY -->|是| COPY[复制 192 帧 / 缺数据则填零]
-        COPY --> SUBMIT[编码并发布输出块]
-        SUBMIT --> DONE{当前 burst 全部提交？}
-        DONE -->|否| GATE
-        DONE -->|是| RELEASE[推进 consumed / 释放槽位]
-        RELEASE --> GATE
-    end
-    QUEUE --> COPY
-    RELEASE -.->|原子计数同步| FULL
-```
+挂载后扫描 TF 根目录，跳过子目录，按扩展名不区分大小写收集
+`.wav`、`.ac3`、`.ec3`、`.eac3`，最多 32 首。
+保持 FAT 枚举顺序，不按名称排序、不递归；没有候选时使用 `PICODAC_SD_FILE`。
+每个路径槽 64 字节，扫描最多复制 60 字节文件名，过长名称可能被截断。
 
-| 缓冲层级 | 大小 | 对应时间 |
+扩展名仅决定列表入选；打开后按文件头识别 WAV、AC3，其余进入 EAC3 解析器检查。
+
+| 类型 | 当前接受格式 | 输出单元 |
 | --- | --- | --- |
-| 文件读缓存 | 8192 字节 | 取决于 EAC3 码率 |
-| 一个 IEC 61937 burst | 24576 字节 | 32 ms |
-| 四槽 burst 队列 | 98304 字节，即 96 KiB | 最多约 128 ms |
-| 一个 SPDIF 输出块 | 192 个双声道帧 | 192 kHz 下为 1 ms |
-| 一个 burst | 32 个 SPDIF 输出块 | 32 ms |
+| WAV | RIFF/WAVE、PCM tag=1、双声道；44.1/48/96 kHz，各支持 16/24-bit | 每槽 192 帧；有符号右对齐 int32 容器，原位深/请求采样率输出 PCM |
+| AC3 | 当前路径接受 48 kHz 裸 AC3 | 3072 个 16-bit 字的 IEC 61937 burst，48 kHz Non-PCM |
+| EAC3 | 48 kHz 裸 EAC3，独立子流 ID 0 及关联 dependent 帧 | 累计六个音频块；12288 个 16-bit 字，192 kHz Non-PCM |
 
-Core1 只发布封装完成的数据；Core0 提交完一个 burst 的最后一部分才释放槽位。
-这避免两个核心同时改写同一槽位。
-
-### EAC3 封装
-
-实现：[eac3_burst.c](eac3_burst.c)。
-
-```mermaid
-flowchart LR
-    RAW[裸 EAC3] --> CHECK[检查同步头、长度、采样率、子流及块数]
-    CHECK --> GROUP[累计 6 个音频块 / 保留关联 dependent 帧]
-    GROUP --> IEC[添加 Pa、Pb、Pc、Pd]
-    IEC --> PAD[复制压缩 payload / 补零]
-    PAD --> BURST[24576 字节完整 burst]
-```
-
-当前接受 48 kHz 裸 EAC3、独立子流 ID 0 及其关联帧。
-这里只封装 IEC 61937，不进行 Dolby 解码；EAC3 的 Pd 使用 payload 字节数。
-
-## 5. SPDIF、DMA 与链路许可
-
-实现：[spdif.c](spdif.c)、[spdif_encode.c](spdif_encode.c)。
+WAV 跳过 JUNK、LIST 等未知块及奇数字节填充，要求 fmt 块先于 data。
+支持传统 PCM tag=1，以及有效位数等于容器位数、子格式 GUID 为整数 PCM 的 WAVE_FORMAT_EXTENSIBLE。
+24-bit 文件样本为紧凑三字节，解包保留有效位；末块不足 192 帧时补零。
+不接受浮点、单声道、多声道、有效位数与容器位数不同的 Extensible PCM 或 RF64。
+WAV 不重采样、不施加软件音量；AC3/EAC3 不解码、不重新编码。
+AC3 的 Pc=0x01、Pd 为 payload 位数；EAC3 的 Pc=0x15、Pd 为 payload 字节数。
 
 ```mermaid
 flowchart TD
-    APP[应用调用 spdif_start] --> REQ[start_requested = true]
-    REQ --> COND{已初始化且 link_enabled？}
-    COND -->|否| WAIT[保留请求 / 暂不启动]
-    COND -->|是| START[启动 DMA / 预填 FIFO / 启用 PIO]
-    BUF[Core0 编码完成的块] --> Q[输出块所有权队列]
-    START --> IRQ[DMA 完成中断]
-    IRQ --> NEXT{下一块已发布？}
-    Q --> NEXT
-    NEXT -->|是| DATA[DMA 读取音频块]
-    NEXT -->|否| ZERO[DMA 读取零数据块 / 累计 silence]
-    DATA --> PIO[PIO TX FIFO → GPIO8]
-    ZERO --> PIO
-    PIO --> IRQ
-    OFF[CEC 关闭 ARC] --> STOP[停 DMA 和 PIO / 清 FIFO / GP8 拉低 / 重置队列]
-    STOP --> KEEP[保留应用启动意图]
-    ON[CEC 握手成功] --> ENABLE[link_enabled = true]
-    ENABLE --> REQUEST{应用已请求启动？}
-    REQUEST -->|是| START
+    MOUNT[挂载 / 根目录建立列表] --> OPEN[打开当前文件 / 8192 字节读缓存]
+    OPEN --> FORMAT[识别格式 / 发布流参数]
+    FORMAT --> PACK[等待空槽 / 解析一个音频单元]
+    PACK --> RESULT{结果}
+    RESULT -->|成功| PUB[发布 produced]
+    PUB --> PACK
+    RESULT -->|EOF 或错误| END[关闭文件、发布结果 / Core1 等待下一首]
+    NEXT[B2 命令 / Core1 尚在运行] --> SWITCH[关闭文件 / 重置队列 / 索引循环加一]
+    SWITCH --> OPEN
+    PUB --> Q[四槽共享队列]
+    Q --> OUT[Core0 每次复制 192 帧]
+    OUT --> SUBMIT[SPDIF 编码并提交]
+    SUBMIT --> RELEASE[完整音频单元提交后推进 consumed]
+    RELEASE -.-> PACK
 ```
 
-实际载波启动必须同时满足：SPDIF 已初始化、应用请求播放、TV 注册成功、无地址冲突、
-ARC 状态 ON、用户仍要求开启。
+四槽用 union 分配，总计固定 96 KiB，有效音频容量随格式变化：
 
-编码后每块为 `768 × uint32_t`，即 3072 字节；DMA 只搬运编码数据，不解析 EAC3。
-ARC 关闭会停止物理载波；ARC 开启但缺数据时继续输出零数据载波，压缩模式保留 Non-PCM 状态。
+| 格式 | 一槽时间 | 四槽时间 | 每槽 SPDIF 块数 |
+| --- | --- | --- | --- |
+| WAV 44.1 kHz | 约 4.35 ms | 约 17.4 ms | 1 |
+| WAV 48 kHz | 4 ms | 16 ms | 1 |
+| WAV 96 kHz | 2 ms | 8 ms | 1 |
+| AC3 48 kHz | 32 ms | 128 ms | 8 |
+| EAC3，192 kHz 载波 | 32 ms | 128 ms | 32 |
 
-## 6. CEC 分层、时序与握手
+正常生产/消费通过 produced、consumed 原子计数发布完整单元，消费完毕才释放槽位。
+切歌使用 stream_switching、stream_generation 通知 Core0；发现代次改变时执行
+`spdif_deinit → spdif_init → spdif_start`，重置本地读索引。
+每次切歌都重配 SPDIF，可能短暂中断物理载波，但不主动结束 CEC ARC 会话。
+下一首计数使用原子变量。切歌时 Core1 先发布 `stream_switching`，Core0 停止并反初始化
+SPDIF 后发布 `switch_ack`；Core1 收到确认后才清空队列、打开下一首并发布新代次，避免复用仍被消费的槽位。
 
-实现：[cec_arc.c](cec_arc.c)、[cec_tv.c](cec_tv.c)、[cec_wire.c](cec_wire.c)。
+## 5. 四键、LED 与停止行为
+
+TF 版 GPIO25 绿色 LED 独立指示 ARC 链路：上电即以 2 秒周期慢闪（亮 1 秒、灭 1 秒）；
+CEC 握手完成、HDMI 5V 存在且链路许可有效后常亮。ARC 终止或 5V 检测失效后恢复慢闪。
+B1 停止、文件 EOF 或读卡错误本身不改变这个指示，只要 ARC 仍开启便常亮。
+CEC 关闭构建无法确认 ARC 状态，GPIO25 保持慢闪。
+
+实现：[sd_controls.c](sd_controls.c)。规则仅接入 TF 模式。
+按键输入上拉、低有效、20 ms 消抖；LED− 固定低，LED+ 高时点亮。
+
+| 按键 | playing=true | playing=false | LED |
+| --- | --- | --- | --- |
+| B1 | 切为停止，同时释放 CEC 音量键 | 切为播放；若已识别 Soundbar 但 ARC 未连接，立即重新请求 System Audio Mode 与 ARC | 常亮 |
+| B2 | 按下时增加下一首命令计数 | 忽略 | 跟随 playing |
+| B3 | 按下/释放设置 CEC 音量加状态 | 忽略 | 跟随 playing |
+| B4 | 按下/释放设置 CEC 音量减状态 | 忽略 | 跟随 playing |
+
+B3/B4 调整 Soundbar 音量，不修改音频数据；CEC 关闭构建中音量接口为空操作。
+持续按住时 CEC 状态机约每 300 ms 重发音量按下消息。
 
 ```mermaid
-flowchart TB
-    BTN[按键变化 / 20 ms 消抖] --> ARC[cec_arc_task：主循环协调层]
-    RX[接收帧邮箱] --> ARC
-    RESULT[发送结果] --> ARC
-    ARC --> TV[cec_tv：地址注册、ARC、音量、查询响应]
-    TV --> TXQ[8 帧发送队列]
-    TXQ --> WIRE[cec_wire：每帧最多 16 字节]
-    TIMER[50 us 定时回调] --> WIRE
-    WIRE <-->|拉低、释放、采样| PIN[GP18]
-    WIRE --> RX
-    WIRE --> RESULT
-    ARC --> GATE[更新 SPDIF 链路许可]
+stateDiagram-v2
+    [*] --> Play: 初始化 playing=true
+    Play --> Stop: B1 按下
+    Stop --> Play: B1 按下
+    Play --> Play: B2 下一首 / B3、B4 音量
+    Stop --> Stop: B2、B3、B4 忽略
 ```
 
-定时回调只负责位级收发，不运行整套 ARC 业务，也不打印日志。
+B1“停止”当前采用保留位置的暂停语义，不回曲首：不消费队列、提交零数据块、把单元偏移归零。
+再次播放从当前 WAV 块或完整压缩 burst 开头继续，可能重放该单元的一部分。
+Core1 可继续填满剩余槽位后等待；已提交 DMA 的音频不会立即清空。
 
-| 项目 | 当前代码值 |
+B1 停止不调用 ARC 关闭接口，不主动改变 HPD 或停止 SPDIF；B1 恢复播放会立即恢复 ARC 开启意愿，
+已识别逻辑地址 5 时无需等待周期性重试便重新发送 System Audio Mode Request 和 ARC 请求。
+输出已启动且链路许可有效时，保持原采样率、位深和 PCM/Non-PCM 状态：
+PCM 发零样本，压缩模式发 Non-PCM 零载波。
+后者不是有效 AC3/EAC3 静音帧，也未构造专门的 IEC 61937 pause burst。
+保留载波能否避免 Soundbar 待机需实测，不能由零数据发送保证。
+
+## 6. SPDIF、CEC 与 HDMI 链路
+
+实现：[spdif.c](spdif.c)、[spdif_encode.c](spdif_encode.c)、[cec_arc.c](cec_arc.c)、
+[cec_tv.c](cec_tv.c)、[cec_wire.c](cec_wire.c)。
+
+每个 SPDIF 编码块为 768 个 uint32，即 3072 字节。
+Core0 编码完成后发布，DMA 接续已发布数据；无数据时使用预编码零块并累计 silence。
+PIO0 经 GPIO16 输出，DMA 不解析文件或压缩格式。
+线性 PCM 的 IEC 60958 channel-status byte 2 分别标记左子帧为声道 1、右子帧为声道 2，
+避免部分 ARC Soundbar 将“未指定声道”的第二子帧映射到右环绕；IEC 61937 压缩载波保持声道号未指定。
+
+默认启用 CEC 时，实际载波需要同时满足：SPDIF 已初始化、应用调用过 spdif_start、
+GPIO17 为高、TV 已注册且无冲突、ARC 状态 ON、tv.desired=true。
+应用启动请求与 B1 的 playing 不同；B1 停止保留启动请求。
+
+```mermaid
+sequenceDiagram
+    participant TV as Pico TV 地址0
+    participant SB as Soundbar 地址5
+    participant OUT as SPDIF GPIO16
+    Note over TV: 开机 desired=true，约1秒后轮询地址0
+    TV->>TV: 轮询头00
+    alt 地址0已有ACK
+        Note over TV: 标记冲突，保持载波关闭
+    else 地址0无ACK
+        TV->>SB: 广播物理地址0.0.0.0
+        TV->>SB: 轮询逻辑地址5
+        SB-->>TV: ACK，确认Audio System存在
+        TV->>SB: 05 70 00 00 请求系统音频
+        TV->>SB: 05 C3 请求开启ARC
+        SB->>TV: 50 C0 Initiate ARC
+        TV->>SB: 05 C1 Report ARC Initiated
+        SB-->>TV: ACK
+        TV->>OUT: 结合5V检测和应用请求允许载波
+    end
+    Note over TV,OUT: B1停止仅将音频数据变零，不发送ARC终止请求
+```
+
+| CEC 参数 | 当前值 |
 | --- | --- |
-| 定时采样 | 50 μs |
+| 位级回调 | 50 μs |
 | 起始位低电平 / 总周期 | 3700 / 4500 μs |
 | 数据 1 / 0 低电平 | 600 / 1500 μs |
 | 数据位总周期 | 2400 μs |
 | ACK / 竞争采样点 | 位开始后 1050 μs |
 | 发送前空闲等待 | 16800 μs |
-| 发送等待超时 | 2 秒 |
-| 发送调度严重迟到 | 超过期限 200 μs，释放总线并失败 |
+| 发送等待超时 / 严重迟到阈值 | 2 秒 / 200 μs |
 | 普通帧发送尝试 | 最多 3 次 |
+| 握手阶段超时 / 后续重试等待 | 4 秒 / 5 秒 |
 
-```mermaid
-sequenceDiagram
-    participant K as 按键或开机
-    participant TV as Pico TV 地址0
-    participant SB as Soundbar 地址5
-    participant OUT as SPDIF GP8
-    K->>TV: 开机默认请求开启
-    TV->>OUT: 关闭载波许可
-    Note over TV: 约1秒后轮询地址0
-    TV->>TV: 发送轮询头00
-    alt 地址0已有设备ACK
-        Note over TV: 标记冲突，保持输出关闭
-    else 地址0无ACK
-        Note over TV: 注册为TV
-        TV->>SB: 广播物理地址0.0.0.0
-        TV->>SB: 05 70 00 00 请求系统音频
-        TV->>SB: 05 C3 请求开启ARC
-        SB->>TV: 50 C0 Initiate ARC
-        TV->>SB: 05 C1 Report ARC Initiated
-        SB-->>TV: C1得到ACK
-        TV->>OUT: 允许载波，已有播放请求则启动
-    end
-    K->>TV: GP10关闭
-    TV->>OUT: 停止载波
-    TV->>SB: 05 C4 请求终止ARC
-    TV->>SB: 05 70 关闭系统音频
-    SB->>TV: 50 C5 Terminate ARC
-    TV->>SB: 05 C2 Report ARC Terminated
-```
+定时回调只负责位级收发，主循环处理接收邮箱、发送结果、八帧发送队列与 TV 状态机。
+音量消息为 05 44 41 / 05 44 42，释放为 05 45。
+Soundbar 终止 ARC、Standby、系统音频关闭或拒绝请求仍可关闭链路，B1 不覆盖这些事件。
 
-等待开启、报告完成等阶段超时为 4 秒；仍有开启意愿时，之后等待 5 秒重试。
-Soundbar 主动 C5 同样关闭输出。明确拒绝、Standby 或系统音频关闭后，不强行持续开启。
-GP26/27 发送音量按下消息 `44 41/42`，松开发送 `45`，不修改压缩音频。
-没有 HPD 拔线检测，拔线不保证自动改变 ARC 状态。
+GPIO17 变低时 HPD 输出高、载波许可关闭；变高时 HPD 输出低。
+5V 消失不会重置全部 CEC 注册/握手状态，热插拔重新握手不能视为已完整实现。
+CEC=OFF 时相关初始化与任务为空，音频许可接口返回 true，也不配置 HPD/5V 检测。
 
-## 7. DDC EDID 读取
+## 7. DDC EDID
 
 实现：[ddc_edid.c](ddc_edid.c)、[ddc_edid_data.c](ddc_edid_data.c)。
 
-```mermaid
-sequenceDiagram
-    participant SB as Soundbar主机
-    participant HW as I2C1
-    participant ISR as DDC回调
-    participant ROM as EDID 256字节
-    SB->>HW: START + 0x50写 + 偏移00
-    HW->>ISR: RECEIVE
-    ISR->>ISR: offset=00，记录偏移已写
-    SB->>HW: repeated START
-    HW->>ISR: FINISH
-    ISR->>ISR: 清写事务标记，保留offset
-    SB->>HW: 0x50读
-    loop 每请求一个字节
-        HW->>ISR: REQUEST
-        ISR->>ROM: 读取EDID[offset]
-        ROM-->>ISR: 字节
-        ISR->>HW: 写TX FIFO，offset递增
-        HW-->>SB: 返回字节
-    end
-    SB->>HW: NACK + STOP
-    HW->>ISR: FINISH
-    ISR->>ISR: 保留下一次读取位置
-```
+I2C1 从地址 0x50，初始化参数 100 kHz，实际总线时钟由 Soundbar 主机提供。
+写事务首字节设置偏移，后续写入丢弃。读请求逐字节返回 Flash 中 256 字节 EDID；
+偏移从 0xFF 回绕到 0。STOP/repeated START 清写事务标志但保留偏移。
+不响应 0x30 段指针，不依赖 TF、CEC 或音频播放状态。
 
-- 0x00～0x7F 是基本块，0x80～0xFF 是扩展块，读完回绕至 0x00。
-- 写事务首字节设置偏移，后续字节丢弃，EDID 不可修改。
-- 不响应 0x30 段指针。
-- 不依赖 TF，不等待 CEC；没有“读完 EDID 才启动 CEC”的联动条件。
-- 数据原样来自用户提供的 `ep-edid-retek-2000.bin`。
-
-## 8. USB 音频模式
+## 8. USB 声卡模式
 
 实现：[usb.c](usb.c)、[usb_audio.c](usb_audio.c)、[audio_device.c](audio_device.c)。
 
-```mermaid
-flowchart TD
-    HOST[USB主机发送音频] --> IRQ[USB中断：复制DPRAM快照 / 重新准备接收]
-    IRQ --> EVENTS[USB事件队列]
-    EVENTS --> TASK[usb_device_task / 丢弃过期流数据包]
-    TASK --> FORMAT[检查长度与帧对齐 / 转换int32样本容器]
-    FORMAT --> RING[约16 ms环形缓冲]
-    RING --> STATE[audio_device_task]
-    STATE --> BUFFER[BUFFERING：水位达到50%请求启动]
-    BUFFER --> PLAY[PLAYING]
-    PLAY --> TYPE{PCM或Non-PCM？}
-    TYPE -->|PCM| GAIN[主音量、左右音量、静音]
-    TYPE -->|Non-PCM| PASS[原样复制IEC 61937字]
-    GAIN --> SPDIF[SPDIF输出 / 受CEC许可控制]
-    PASS --> SPDIF
-    PLAY -->|水位不高于16%或不足一块| STALL[STALLED：输出零数据]
-    STALL -->|水位恢复40%| PLAY
-    RING -.->|水位| FB[USB feedback 微调主机发送速率]
-    FB -.-> HOST
-```
+USB 中断复制 DPRAM 数据包快照并重新准备接收，主循环丢弃过期流数据包，检查长度、帧对齐，
+转换 int32 样本并写入约 16 ms 环形缓冲。压缩模式由主机提供已封装的 IEC 61937。
 
-TF 模式由 Pico 封装裸 EAC3；USB 压缩模式要求主机已完成 IEC 61937 封装。
-TF 在 ARC 关闭时暂停消费；USB 不会自动暂停电脑播放器，仍可能接收数据并溢出丢帧，
-恢复时接收器需重新同步后续 burst。
-
-## 9. 异常与边界行为
-
-| 情况 | 当前行为 |
+| 音频状态 | 行为 |
 | --- | --- |
-| TF 挂载或打开失败 | 不启动音频，继续 CEC 与 DDC |
-| 文件结束 | 排空数据；ARC 开启时继续 Non-PCM 零数据载波 |
-| TF 暂时供数不足 | 补零并累计 underrun |
-| ARC 中途关闭 | 停 DMA/PIO，暂停消费 TF 队列 |
-| ARC 重新开启 | TF 从当前完整 burst 头部重新提交 |
-| CEC 地址0占用 | 标记冲突，不开启 ARC |
-| CEC 发送失败 | 有限重试，结果交给 TV 状态机 |
-| DDC 数据写入 | 丢弃，保持只读 |
-| GP26 按下 | 向 Soundbar 发音量加，不驱动原 LED |
-| Soundbar 不读 EDID | 不直接阻止 CEC 状态机运行 |
+| STOPPED | 等待主机开启流 |
+| BUFFERING | 水位达到 50% 后请求启动 |
+| PLAYING | PCM 施加音量/静音；Non-PCM 原样复制并绕过增益 |
+| STALLED | 水位不高于 16% 或不足一块时补零，恢复至 40% 后继续 |
 
-## 10. 调试观察点与硬件边界
+USB feedback 根据水位微调主机发送速率。ARC 关闭不会自动暂停电脑播放器，
+USB 仍可能收包并溢出，恢复后接收器需重新同步后续压缩 burst。
 
-可通过调试器观察以下变量：
+TF 四键状态机未接入 USB 主循环。USB HID 仍为独立的三键/三 LED 实现，
+CEC 开启时 HID 按键采样直接返回零；第 5 节规则不能视为 USB 模式行为。
 
-- CEC：`cec_rx_frames`、`cec_tx_frames`、`cec_tx_errors`、`cec_rx_errors`、`cec_address_conflict`。
-- ARC：`cec_arc_state`，0=关闭、1=等待C0、2=等待C1成功、3=开启、4=正在关闭。
-- DDC：`ddc_read_bytes`、`ddc_offset_writes`、`ddc_ignored_writes`。
-- TF：`sd_eac3_status`、`sd_eac3_bursts_played`、`sd_eac3_underruns`。
-- SPDIF：`spdif_tx_stall_count`、`spdif_silence_block_count`。
+## 9. 当前边界与待修正项
 
-HPD、HDMI +5V、DDC 双向电平转换及 SPDIF→ARC 电气转换由外部硬件负责。
-GPIO 不可直接接入 5V 上拉总线。本程序不是完整 HDMI TV 或 eARC 实现。
+以下限制来自当前源码核对，不应按此前功能摘要理解为已完成验证。
 
-相关接线、构建与限制详见 [CEC_ARC.md](CEC_ARC.md)、[SD_EAC3.md](SD_EAC3.md)、[SPDIF.md](SPDIF.md)。
+| 情况 | 当前行为或问题 |
+| --- | --- |
+| 挂载或首次打开失败 | 不启动 SPDIF，继续按键、CEC、诊断；无自动恢复读卡流程 |
+| EOF | Core1 关闭当前文件并等待，Core0 排空队列后补零；不会自动下一首 |
+| EOF 后 B2 | Core1 保持运行，收到命令后按列表循环打开下一首 |
+| LED / 播放状态 | LED 只跟随 playing；EOF、错误、等待 ARC 不自动熄灭 B2–B4；sd_eac3_status 未单独编码 B1 暂停 |
+| 正常播放时切歌 | 使用 Core0/Core1 确认握手后重开和重配；仍需真实多文件实机验证 |
+| 无效或不支持的文件 | 保留实际解析错误并停止该文件，Core1 等待 B2 后继续下一首 |
+| TF 供数不足 | 输出零块并累计 underrun；96 kHz WAV 四槽仅约 8 ms，不能套用 EAC3 的 128 ms |
+| ARC 关闭再恢复 | 暂停 TF 消费，恢复时从当前音频单元头部重发 |
+| 停止防待机 | 目前尝试保留载波；Non-PCM 零载波兼容性和 Soundbar 待机行为需实测 |
+
+既有主机测试覆盖格式解析、独立按键状态、USB 透传及 EAC3 队列/EOF 等，
+不等于验证了真实 TF 卡上的跨格式切歌或实际防待机。
+此前 RP2040 交叉构建未完成；本次文档更新不新增 UF2 或实机验证结论。
+
+## 10. 诊断与源码索引
+
+| 模块 | 观察变量 / 入口 |
+| --- | --- |
+| TF 状态 | sd_eac3_status：0 等待、1 输出阶段、2 EOF、负值错误，名称沿用旧 EAC3 版 |
+| TF 计数 | sd_eac3_bursts_played：已提交音频单元数，WAV 时为块数；sd_eac3_underruns |
+| 控制 | sd_controls_playing()、sd_controls_next_generation() |
+| CEC | cec_rx_frames、cec_tx_frames、cec_tx_errors、cec_rx_errors、cec_address_conflict |
+| ARC | cec_arc_state：0 关闭、1 等待 C0、2 等待 C1 成功、3 开启、4 正在关闭 |
+| DDC | ddc_read_bytes、ddc_offset_writes、ddc_ignored_writes |
+| SPDIF | spdif_tx_stall_count、spdif_silence_block_count |
+
+格式解析见 [wav_reader.c](wav_reader.c)、[ac3_burst.c](ac3_burst.c)、[eac3_burst.c](eac3_burst.c)。
+构建入口见 [CMakeLists.txt](CMakeLists.txt)，板级简表见 [RP_ZERO_C1.md](RP_ZERO_C1.md)。
+[CEC_ARC.md](CEC_ARC.md)、[SD_EAC3.md](SD_EAC3.md)、[SPDIF.md](SPDIF.md) 保留历史信息，
+其中旧 GPIO 与旧分支配置不可直接用于 RP-ZERO-C1。
+
+DDC 电平转换、HDMI 5V 检测电路、SPDIF→ARC 电气转换由外部硬件完成。
+GPIO 不直接接 5V 总线；本程序不是完整 HDMI TV 或 eARC 实现。
