@@ -50,7 +50,8 @@ int wav_reader_open(wav_reader_t *r, wav_read_fn read, void *ctx) {
       }
       if (!pcm || r->channels != 2 || (r->bits != 16 && r->bits != 24) ||
           align != r->channels * r->bits / 8 ||
-          (r->sample_rate != 44100 && r->sample_rate != 48000 && r->sample_rate != 96000))
+          (r->sample_rate != 44100 && r->sample_rate != 48000 &&
+           r->sample_rate != 96000 && r->sample_rate != 192000))
         return WAV_UNSUPPORTED;
       if (skip(r, size - take + (size & 1)) < 0) return WAV_TRUNCATED;
       have_fmt = true;
@@ -81,6 +82,6 @@ int wav_next_block(wav_reader_t *r, int32_t out[384], unsigned *frames) {
 const char *wav_result_string(int r) {
   switch (r) { case WAV_EOF:return "end of file"; case WAV_BLOCK_READY:return "block ready";
     case WAV_IO_ERROR:return "TF read error"; case WAV_TRUNCATED:return "truncated WAV";
-    case WAV_BAD_FORMAT:return "invalid RIFF/WAVE"; case WAV_UNSUPPORTED:return "requires stereo PCM WAV, 44.1/48/96 kHz, 16/24-bit";
+    case WAV_BAD_FORMAT:return "invalid RIFF/WAVE"; case WAV_UNSUPPORTED:return "requires stereo PCM WAV, 44.1/48/96/192 kHz, 16/24-bit";
     default:return "unknown WAV error"; }
 }

@@ -12,7 +12,7 @@ CEC 负责 ARC 握手与 Soundbar 音量控制，DDC 提供只读 EDID。
 ```mermaid
 flowchart TB
     TF[TF：WAV / AC3 / EAC3] --> C1[Core1：FatFs 读取、解析、封装]
-    C1 --> Q[四槽完整音频单元队列]
+    C1 --> Q[共享音频区：PCM 64槽 / 压缩4槽]
     Q --> C0[Core0：TF 播放循环]
     KEYS[四键及 LED] --> C0
     KEYS --> VOL[CEC 音量键]
@@ -42,6 +42,7 @@ TF 和 USB 在编译时二选一，不是运行时切换。
 | `PICODAC_CEC` / `PICODAC_DDC` | CEC 默认开启，DDC 默认跟随 CEC 配置 |
 | `PICODAC_SD_DIAGNOSTICS` | 默认关闭，可开启非阻塞 UART 诊断 |
 | `PICODAC_SD_UART_LOG` | 默认开启，可关闭 TF stdio UART 日志 |
+| `PICODAC_SD_BENCHMARK` | 默认关闭；开启后播放前只读测试每个 WAV 最多 4 MiB，并通过 UART 输出吞吐量与慢读延迟 |
 
 I2S 历史源码仍在仓库，但目标不编译 I2S/BOTH，固定
 `PICODAC_OUTPUT_SPDIF=1`、`PICODAC_OUTPUT_BOTH=0`。
@@ -53,7 +54,7 @@ I2S 历史源码仍在仓库，但目标不编译 I2S/BOTH，固定
 | 功能 | GPIO / 配置 | 用途 |
 | --- | --- | --- |
 | UART0 TX / RX | 0 / 1 | 日志及可选诊断；诊断使用 115200 8N1 |
-| TF SPI0 SCK / MOSI / MISO / CS | 2 / 3 / 4 / 5 | Core1 访问 FatFs；初始化 100 kHz，正常默认 12 MHz |
+| TF SPI0 SCK / MOSI / MISO / CS | 2 / 3 / 4 / 5 | Core1 访问 FatFs；初始化100 kHz，正常默认24 MHz |
 | DDC SDA / SCL | 6 / 7，均属于 I2C1 | 地址 0x50，关闭内部上拉 |
 | SPDIF / ARC TX | 16，PIO0 | 固定输出引脚，动态申请状态机 |
 | HDMI 5V Detect | 17，输入 | 高电平表示检测到 HDMI 5V，经外部电路转换电平 |
@@ -83,7 +84,7 @@ flowchart TD
     TIMER --> MODE{输入构建}
     MODE -->|SD_AUDIO| KEYS[初始化诊断、四键和 LED]
     KEYS --> CORE[启动 Core1 读卡]
-    CORE --> PRE[Core0 等待四槽预缓冲或生产者结束]
+    CORE --> PRE[Core1 填满对应格式队列后发布播放流]
     PRE --> SD[TF 播放循环]
     MODE -->|USB| USB[初始化音频缓冲、USB Audio、HID]
     USB --> LOOP[USB task → audio task → CEC task]
@@ -107,7 +108,7 @@ DDC 先于读卡初始化，TF 失败不阻止 EDID 读取。
 
 | 类型 | 当前接受格式 | 输出单元 |
 | --- | --- | --- |
-| WAV | RIFF/WAVE、PCM tag=1、双声道；44.1/48/96 kHz，各支持 16/24-bit | 每槽 192 帧；有符号右对齐 int32 容器，原位深/请求采样率输出 PCM |
+| WAV | RIFF/WAVE、PCM tag=1、双声道；44.1/48/96/192 kHz，各支持 16/24-bit | 每槽 192 帧；有符号右对齐 int32 容器，原位深/请求采样率输出 PCM |
 | AC3 | 当前路径接受 48 kHz 裸 AC3 | 3072 个 16-bit 字的 IEC 61937 burst，48 kHz Non-PCM |
 | EAC3 | 48 kHz 裸 EAC3，独立子流 ID 0 及关联 dependent 帧 | 累计六个音频块；12288 个 16-bit 字，192 kHz Non-PCM |
 
@@ -129,20 +130,22 @@ flowchart TD
     RESULT -->|EOF 或错误| END[关闭文件、发布结果 / Core1 等待下一首]
     NEXT[B2 命令 / Core1 尚在运行] --> SWITCH[关闭文件 / 重置队列 / 索引循环加一]
     SWITCH --> OPEN
-    PUB --> Q[四槽共享队列]
+    PUB --> Q[共享96 KiB队列]
     Q --> OUT[Core0 每次复制 192 帧]
     OUT --> SUBMIT[SPDIF 编码并提交]
     SUBMIT --> RELEASE[完整音频单元提交后推进 consumed]
     RELEASE -.-> PACK
 ```
 
-四槽用 union 分配，总计固定 96 KiB，有效音频容量随格式变化：
+音频区使用 union 分配，总计固定96 KiB：压缩格式划分为4个大槽，PCM划分为64个192帧小槽，
+不增加RAM占用。开始输出前先填满对应格式的队列，以覆盖TF卡的单次读取延迟。
 
-| 格式 | 一槽时间 | 四槽时间 | 每槽 SPDIF 块数 |
+| 格式 | 一槽时间 | 队列总时长 | 每槽 SPDIF 块数 |
 | --- | --- | --- | --- |
-| WAV 44.1 kHz | 约 4.35 ms | 约 17.4 ms | 1 |
-| WAV 48 kHz | 4 ms | 16 ms | 1 |
-| WAV 96 kHz | 2 ms | 8 ms | 1 |
+| WAV 44.1 kHz | 约4.35 ms | 约278.6 ms（64槽） | 1 |
+| WAV 48 kHz | 4 ms | 256 ms（64槽） | 1 |
+| WAV 96 kHz | 2 ms | 128 ms（64槽） | 1 |
+| WAV 192 kHz | 1 ms | 64 ms（64槽） | 1 |
 | AC3 48 kHz | 32 ms | 128 ms | 8 |
 | EAC3，192 kHz 载波 | 32 ms | 128 ms | 32 |
 
@@ -292,7 +295,7 @@ CEC 开启时 HID 按键采样直接返回零；第 5 节规则不能视为 USB 
 | LED / 播放状态 | LED 只跟随 playing；EOF、错误、等待 ARC 不自动熄灭 B2–B4；sd_eac3_status 未单独编码 B1 暂停 |
 | 正常播放时切歌 | 使用 Core0/Core1 确认握手后重开和重配；仍需真实多文件实机验证 |
 | 无效或不支持的文件 | 保留实际解析错误并停止该文件，Core1 等待 B2 后继续下一首 |
-| TF 供数不足 | 输出零块并累计 underrun；96 kHz WAV 四槽仅约 8 ms，不能套用 EAC3 的 128 ms |
+| TF 供数不足 | 输出零块并累计 underrun；PCM 64槽用于覆盖读卡长延迟，192 kHz/24-bit仍要求有效持续读取速度高于1.152 MB/s |
 | ARC 关闭再恢复 | 暂停 TF 消费，恢复时从当前音频单元头部重发 |
 | 停止防待机 | 目前尝试保留载波；Non-PCM 零载波兼容性和 Soundbar 待机行为需实测 |
 

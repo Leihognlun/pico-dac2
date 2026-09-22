@@ -21,10 +21,11 @@ set(PICODAC_SD_SCK_PIN 2 CACHE STRING "TF SPI0 SCLK GPIO")
 set(PICODAC_SD_MOSI_PIN 3 CACHE STRING "TF SPI0 TX/MOSI GPIO")
 set(PICODAC_SD_MISO_PIN 4 CACHE STRING "TF SPI0 RX/MISO GPIO")
 set(PICODAC_SD_CS_PIN 5 CACHE STRING "TF SPI0 CS GPIO")
-set(PICODAC_SD_SPI_HZ 12000000 CACHE STRING "TF SPI transfer clock")
+set(PICODAC_SD_SPI_HZ 24000000 CACHE STRING "TF SPI transfer clock")
 set(PICODAC_SD_FILE "0:/TRACK.WAV" CACHE STRING "WAV, AC3, or E-AC-3 file on TF")
 option(PICODAC_SD_DIAGNOSTICS "Nonblocking UART0 SD playback diagnostics" ON)
 option(PICODAC_SD_UART_LOG "Enable UART log output in SD mode" ON)
+option(PICODAC_SD_BENCHMARK "Benchmark read-only TF/SPI throughput before playback" OFF)
 
 # user configurations
 option(PICODAC_CEC "TV CEC / ARC control" ON)
@@ -175,6 +176,7 @@ endif()
             PICODAC_SD_CS_PIN=${PICODAC_SD_CS_PIN}
             PICODAC_SD_SPI_HZ=${PICODAC_SD_SPI_HZ}
             PICODAC_SD_FILE="${PICODAC_SD_FILE}"
+            PICODAC_SD_BENCHMARK=$<BOOL:${PICODAC_SD_BENCHMARK}>
         )
     else()
         target_sources(mdac_adc2 PRIVATE audio_device.c ringbuffer.c usb.c usb_audio.c usb_hid.c)

@@ -33,7 +33,7 @@ cmake --build build/zero-c1-sd
 The file type is detected from its contents, so `PICODAC_SD_FILE` may point to
 a `.wav`, `.ac3`, `.ec3`, or `.eac3` file. Supported TF formats are:
 
-- stereo PCM RIFF/WAVE: 44.1, 48, or 96 kHz; 16-bit or packed 24-bit;
+- stereo PCM RIFF/WAVE: 44.1, 48, 96, or 192 kHz; 16-bit or packed 24-bit;
 - raw 48 kHz AC-3, packed into IEC 61937 type `0x01` bursts;
 - the existing raw 48 kHz E-AC-3 path, using a 192 kHz IEC 61937 carrier.
 

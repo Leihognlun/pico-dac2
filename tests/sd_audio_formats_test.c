@@ -49,4 +49,4 @@ static void check_extensible(void) {
   assert(wav_next_block(&r,out,&frames)==WAV_BLOCK_READY&&frames==1);
   assert(out[0]==-8388608&&out[1]==8388607);
 }
-int main(void){uint32_t rates[]={44100,48000,96000};for(unsigned r=0;r<3;++r){check_wav(rates[r],16);check_wav(rates[r],24);}check_extensible();check_ac3();puts("PASS: PCM/Extensible WAV 44.1/48/96 kHz 16/24-bit and 48 kHz AC-3 packing");}
+int main(void){uint32_t rates[]={44100,48000,96000,192000};for(unsigned r=0;r<4;++r){check_wav(rates[r],16);check_wav(rates[r],24);}check_extensible();check_ac3();puts("PASS: PCM/Extensible WAV 44.1/48/96/192 kHz 16/24-bit and 48 kHz AC-3 packing");}

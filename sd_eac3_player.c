@@ -18,14 +18,17 @@
 #include "tf_card.h"
 #include "wav_reader.h"
 
-#define AUDIO_SLOTS 4u
+#define COMPRESSED_SLOTS 4u
+#define PCM_SLOT_WORDS (SPDIF_BLOCK_FRAMES * 2u)
+#define PCM_SLOTS ((COMPRESSED_SLOTS * EAC3_BURST_WORDS * sizeof(uint16_t)) / \
+                   (PCM_SLOT_WORDS * sizeof(int32_t)))
 #define MAX_TRACKS 32u
 #define TRACK_PATH_SIZE 64u
 
 typedef union {
-  uint16_t compressed[EAC3_BURST_WORDS];
-  int32_t pcm[SPDIF_BLOCK_FRAMES * 2];
-} audio_slot_t;
+  uint16_t compressed[COMPRESSED_SLOTS][EAC3_BURST_WORDS];
+  int32_t pcm[PCM_SLOTS][PCM_SLOT_WORDS];
+} audio_storage_t;
 
 typedef enum {
   TRACK_EAC3,
@@ -33,13 +36,18 @@ typedef enum {
   TRACK_WAV,
 } track_format_t;
 
-static audio_slot_t slots[AUDIO_SLOTS];
+static audio_storage_t audio_storage;
+_Static_assert(sizeof(audio_storage.pcm) == sizeof(audio_storage.compressed),
+               "PCM and compressed queues must reuse the same storage");
 static char tracks[MAX_TRACKS][TRACK_PATH_SIZE];
 static unsigned track_count;
 
 static atomic_uint produced, consumed;
 static atomic_int producer_result;
 static atomic_bool stream_ready, stream_switching;
+#if PICODAC_SD_BENCHMARK
+static atomic_bool benchmark_running;
+#endif
 static atomic_uint stream_generation, switch_sequence, switch_ack_sequence;
 
 // Published by Core1 before stream_generation/stream_ready release stores.
@@ -83,6 +91,69 @@ static bool supported_name(const char *name) {
   return !strcmp(ext, ".wav") || !strcmp(ext, ".ac3") ||
          !strcmp(ext, ".ec3") || !strcmp(ext, ".eac3");
 }
+
+#if PICODAC_SD_BENCHMARK
+static bool wav_name(const char *name) {
+  const char *dot = strrchr(name, '.');
+  if (!dot) return false;
+  char ext[5] = {0};
+  for (unsigned i = 0; dot[i] && i < sizeof(ext) - 1; ++i)
+    ext[i] = (char)tolower((unsigned char)dot[i]);
+  return !strcmp(ext, ".wav");
+}
+
+static void benchmark_file(const char *path) {
+  FIL benchmark;
+  FRESULT fr = f_open(&benchmark, path, FA_READ);
+  if (fr != FR_OK) {
+    printf("SDBENCH file=%s open_fr=%d\n", path, fr);
+    return;
+  }
+
+  enum { LIMIT_BYTES = 4 * 1024 * 1024, SLOW_WARN_US = 6000 };
+  uint32_t started = time_us_32(), maximum = 0;
+  unsigned bytes = 0, reads = 0, slow6 = 0, slow8 = 0;
+  while (bytes < LIMIT_BYTES) {
+    UINT count = 0;
+    uint32_t read_started = time_us_32();
+    fr = f_read(&benchmark, cache, sizeof(cache), &count);
+    uint32_t elapsed = time_us_32() - read_started;
+    if (elapsed > maximum) maximum = elapsed;
+    if (elapsed > SLOW_WARN_US) ++slow6;
+    if (elapsed > 8000) ++slow8;
+    bytes += count;
+    ++reads;
+    if (fr != FR_OK || !count) break;
+  }
+  uint32_t total_us = time_us_32() - started;
+  unsigned kbps = total_us ? (unsigned)(((uint64_t)bytes * 1000) / total_us) : 0;
+  unsigned average_us = reads ? total_us / reads : 0;
+  int margin96 = ((int)kbps - 576) * 100 / 576;
+  int margin192 = ((int)kbps - 1152) * 100 / 1152;
+  printf("SDBENCH file=%s spi_hz=%u bytes=%u time_ms=%lu "
+         "speed_kBps=%u margin96_pct=%d margin192_pct=%d "
+         "reads=%u rdavg_us=%u rdmax_us=%lu "
+         "slow6ms=%u slow8ms=%u fr=%d\n",
+         path, PICODAC_SD_SPI_HZ, bytes, (unsigned long)(total_us / 1000),
+         kbps, margin96, margin192, reads, average_us, (unsigned long)maximum,
+         slow6, slow8, fr);
+  f_close(&benchmark);
+}
+
+static void benchmark_wav_files(void) {
+  bool found = false;
+  unsigned tested = 0;
+  puts("SDBENCH begin: WAV requires 576/1152 kB/s at 96/192kHz 24-bit stereo; read-only 4MiB/file");
+  for (unsigned i = 0; i < track_count; ++i) {
+    if (!wav_name(tracks[i]) || tested == 4) continue;
+    found = true;
+    ++tested;
+    benchmark_file(tracks[i]);
+  }
+  if (!found && track_count) benchmark_file(tracks[0]);
+  puts("SDBENCH end");
+}
+#endif
 
 static void scan_tracks(void) {
   DIR dir;
@@ -146,6 +217,9 @@ static void producer(void) {
       .pullup = true,
   };
   if (!pico_fatfs_set_config(&config)) {
+#if PICODAC_SD_BENCHMARK
+    atomic_store_explicit(&benchmark_running, false, memory_order_release);
+#endif
     publish_track_state(false, EAC3_UNSUPPORTED);
     return;
   }
@@ -154,6 +228,9 @@ static void producer(void) {
   FRESULT fr = f_mount(&fs, "0:", 1);
   if (fr != FR_OK) {
     printf("TF mount failed: FatFs %d\n", fr);
+#if PICODAC_SD_BENCHMARK
+    atomic_store_explicit(&benchmark_running, false, memory_order_release);
+#endif
     publish_track_state(false, EAC3_IO_ERROR);
     return;
   }
@@ -167,6 +244,11 @@ static void producer(void) {
   printf("TF playlist: %u track(s)\n", track_count);
   for (unsigned i = 0; i < track_count; ++i)
     printf("TF playlist[%u]: %s\n", i, tracks[i]);
+
+#if PICODAC_SD_BENCHMARK
+  benchmark_wav_files();
+  atomic_store_explicit(&benchmark_running, false, memory_order_release);
+#endif
 
   unsigned track = 0;
   unsigned command = sd_controls_next_generation();
@@ -243,14 +325,15 @@ static void producer(void) {
            track, tracks[track], format_name(format),
            (unsigned long)stream_rate, stream_depth,
            stream_non_pcm ? "non-pcm" : "pcm");
-    publish_track_state(true, 0);
 
     unsigned write = 0;
+    unsigned queue_slots = format == TRACK_WAV ? PCM_SLOTS : COMPRESSED_SLOTS;
+    bool ready_published = false;
     for (;;) {
       if (sd_controls_next_generation() != command) break;
       sd_diag_phase(SD_DIAG_WAIT);
       while (write - atomic_load_explicit(&consumed, memory_order_acquire) ==
-             AUDIO_SLOTS) {
+             queue_slots) {
         if (sd_controls_next_generation() != command) goto switch_track;
         sleep_us(100);
       }
@@ -258,16 +341,23 @@ static void producer(void) {
       sd_diag_phase(SD_DIAG_PACK);
       if (format == TRACK_WAV) {
         unsigned frames;
-        result = wav_next_block(&wav, slots[write % AUDIO_SLOTS].pcm, &frames);
+        result = wav_next_block(&wav,
+                                audio_storage.pcm[write % PCM_SLOTS], &frames);
       } else if (format == TRACK_AC3) {
         result = ac3_next_burst(&ac3,
-                                slots[write % AUDIO_SLOTS].compressed);
+            audio_storage.compressed[write % COMPRESSED_SLOTS]);
       } else {
         result = eac3_next_burst(&eac3,
-                                 slots[write % AUDIO_SLOTS].compressed);
+            audio_storage.compressed[write % COMPRESSED_SLOTS]);
       }
       if (result != 1) break;
       atomic_store_explicit(&produced, ++write, memory_order_release);
+      // Start only after the format-specific queue is full.  The same 96 KiB
+      // storage therefore provides 4 compressed bursts or 64 PCM blocks.
+      if (!ready_published && write == queue_slots) {
+        publish_track_state(true, 0);
+        ready_published = true;
+      }
     }
 
 switch_track:
@@ -278,6 +368,10 @@ switch_track:
     }
 
     int final_result = result == 0 ? 2 : result;
+    if (!ready_published) {
+      publish_track_state(write != 0, final_result);
+      ready_published = write != 0;
+    }
     atomic_store_explicit(&producer_result, final_result,
                           memory_order_release);
     sd_diag_phase(SD_DIAG_DONE);
@@ -298,6 +392,9 @@ wait_next:
 static void diagnostics(void) {
   sd_controls_task();
   cec_arc_task();
+#if PICODAC_SD_BENCHMARK
+  if (atomic_load_explicit(&benchmark_running, memory_order_acquire)) return;
+#endif
   unsigned c = atomic_load_explicit(&consumed, memory_order_relaxed);
   unsigned p = atomic_load_explicit(&produced, memory_order_acquire);
   sd_diag_task(p, c, sd_eac3_status, sd_eac3_underruns,
@@ -310,6 +407,9 @@ void sd_eac3_player_run(void) {
   printf("TF audio: SPI0 RX=%d CS=%d SCK=%d TX=%d\n",
          PICODAC_SD_MISO_PIN, PICODAC_SD_CS_PIN, PICODAC_SD_SCK_PIN,
          PICODAC_SD_MOSI_PIN);
+#if PICODAC_SD_BENCHMARK
+  atomic_store_explicit(&benchmark_running, true, memory_order_relaxed);
+#endif
   multicore_launch_core1(producer);
 
   bool output_initialized = false;
@@ -398,9 +498,10 @@ void sd_eac3_player_run(void) {
       if (!have_unit || !playing) {
         out[i] = 0;
       } else if (stream_non_pcm) {
-        out[i] = (int16_t)slots[read % AUDIO_SLOTS].compressed[offset + i];
+        out[i] = (int16_t)
+            audio_storage.compressed[read % COMPRESSED_SLOTS][offset + i];
       } else {
-        out[i] = slots[read % AUDIO_SLOTS].pcm[i];
+        out[i] = audio_storage.pcm[read % PCM_SLOTS][i];
       }
     }
     spdif_submit_buffer();
