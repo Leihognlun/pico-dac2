@@ -48,6 +48,9 @@ void cec_arc_init(void) {
   if (!add_repeating_timer_us(-50, tick, NULL, &timer)) panic("CEC timer unavailable");
 }
 void cec_arc_set_enabled(bool enabled) { cec_tv_request_arc(&tv, enabled, time_us_32()); }
+void cec_arc_request_playback(void) {
+  cec_tv_request_playback(&tv, time_us_32());
+}
 void cec_arc_volume_key(bool up, bool pressed) { tv.key = pressed ? (up ? 0x41 : 0x42) : 0; }
 bool cec_arc_audio_allowed(void) { return gate; }
 void cec_arc_task(void) {

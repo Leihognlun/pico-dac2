@@ -14,6 +14,7 @@
 #endif
 #include "eac3_burst.h"
 #include "sd_eac3_player.h"
+#include "sd_controls.h"
 #include "spdif.h"
 #include "spdif_encode.h"
 #include "ff.h"
@@ -42,6 +43,7 @@ static bool arc_gate, arc_paused;
 static unsigned arc_wait = 5;
 bool cec_arc_audio_allowed(void) { return arc_gate; }
 void cec_arc_set_enabled(bool enabled) {(void)enabled;}
+void cec_arc_request_playback(void) {}
 void cec_arc_volume_key(bool up, bool pressed) {(void)up;(void)pressed;}
 void cec_arc_task(void) {
   if (!arc_gate && arc_wait && !--arc_wait) arc_gate = true;
@@ -172,6 +174,7 @@ int main(int argc, char **argv) {
     assert(sd_eac3_status == EAC3_IO_ERROR && played == 7);
   } else {
     assert(sd_eac3_status == 2 && played == file_size / 1024);
+    assert(!sd_controls_playing());
   }
   assert(sd_eac3_bursts_played == played);
   if (scenario == 5) assert(sd_eac3_underruns > 0);

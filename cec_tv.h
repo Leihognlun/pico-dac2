@@ -9,6 +9,7 @@ enum {
 typedef struct {
   cec_send_fn send; void *ctx;
   bool registered, conflict, polling, soundbar_present, soundbar_polling;
+  bool system_audio_request_pending, arc_route_request_pending;
   bool desired, system_audio, muted;
   uint8_t arc, volume, key, sent_key;
   uint32_t deadline, retry_at, key_at;
@@ -18,3 +19,4 @@ void cec_tv_task(cec_tv_t *tv, uint32_t now);
 void cec_tv_receive(cec_tv_t *tv, const cec_frame_t *frame, uint32_t now);
 void cec_tv_tx_result(cec_tv_t *tv, uint8_t tag, unsigned result, uint32_t now);
 void cec_tv_request_arc(cec_tv_t *tv, bool on, uint32_t now);
+void cec_tv_request_playback(cec_tv_t *tv, uint32_t now);

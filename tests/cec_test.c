@@ -15,6 +15,7 @@ static void receive(cec_tv_t *tv, unsigned header, unsigned op, uint32_t now) {
 }
 static void controller(void) {
   cec_tv_t tv;
+  unsigned n;
   cec_tv_init(&tv, enqueue, NULL, 0);
   cec_tv_task(&tv, 999999); assert(count == 0);
   cec_tv_task(&tv, 1000000);
@@ -40,10 +41,17 @@ static void controller(void) {
   assert(tv.arc == CEC_ARC_REPORTING && sent[count-1].data[1] == 0xc1);
   cec_tv_tx_result(&tv, CEC_TAG_ENABLE, CEC_TX_OK, 1300000);
   assert(tv.arc == CEC_ARC_ON);
+  n = count; cec_tv_request_playback(&tv, 1350000);
+  cec_tv_task(&tv, 1350000);
+  assert(count == n + 2 && sent[n].data[0] == 0x0f &&
+         sent[n].data[1] == 0x86 && sent[n].data[2] == 0 &&
+         sent[n].data[3] == 0 && sent[n + 1].data[0] == 0x0f &&
+         sent[n + 1].data[1] == 0x82 && sent[n + 1].data[2] == 0 &&
+         sent[n + 1].data[3] == 0 && tv.arc == CEC_ARC_ON);
   receive(&tv, 0x50, 0xc0, 1400000); assert(tv.arc == CEC_ARC_ON);
   tv.key = 0x41; cec_tv_task(&tv, 1500000);
   assert(sent[count-1].data[1] == 0x44 && sent[count-1].data[2] == 0x41);
-  unsigned n = count; cec_tv_task(&tv, 1799999); assert(count == n);
+  n = count; cec_tv_task(&tv, 1799999); assert(count == n);
   cec_tv_task(&tv, 1800000); assert(count == n+1);
   tv.key = 0; cec_tv_task(&tv, 1800100); assert(sent[count-1].data[1] == 0x45);
   cec_tv_request_arc(&tv, false, 1900000); assert(tv.arc == CEC_ARC_STOPPING);
@@ -56,7 +64,9 @@ static void controller(void) {
   assert(sent[count-1].data[1] == 0x9e && sent[count-1].data[2] == 5);
   receive(&tv, 0x50, 0xee, 2400000); assert(sent[count-1].data[1] == 0);
   n = count; receive(&tv, 0x5f, 0xee, 2400000); assert(count == n);
-  cec_tv_request_arc(&tv, true, 2500000); cec_tv_task(&tv, 2500000);
+  n = count; cec_tv_request_playback(&tv, 2500000); cec_tv_task(&tv, 2500000);
+  assert(count == n + 2 && sent[n].data[1] == 0x70 &&
+         sent[n + 1].data[1] == 0xc3);
   cec_tv_task(&tv, 6500000); assert(tv.arc == CEC_ARC_OFF);
   cec_tv_task(&tv, 11500000); assert(tv.arc == CEC_ARC_REQUESTED);
   receive(&tv, 0x50, 0xc0, 11600000);

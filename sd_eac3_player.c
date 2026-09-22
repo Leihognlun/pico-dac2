@@ -379,13 +379,18 @@ switch_track:
            tracks[track], format_name(format), final_result,
            result_name(format, result));
 
-wait_next:
+wait_next: {
 #ifdef PICODAC_TEST_EXIT_ON_EOF
     f_mount(NULL, "0:", 0);
     return;
 #endif
-    while (sd_controls_next_generation() == command) sleep_ms(1);
-    track = advance_track(track, &command);
+    unsigned wait_play = sd_controls_play_generation();
+    while (sd_controls_next_generation() == command &&
+           sd_controls_play_generation() == wait_play)
+      sleep_ms(1);
+    if (sd_controls_next_generation() != command)
+      track = advance_track(track, &command);
+  }
   }
 }
 
@@ -486,6 +491,7 @@ void sd_eac3_player_run(void) {
               atomic_load_explicit(&produced, memory_order_acquire);
           if (!have_unit) {
             sd_eac3_status = result;
+            if (result == 2) sd_controls_stop();
             reported = true;
           }
         }

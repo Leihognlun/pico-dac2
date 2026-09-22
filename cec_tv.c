@@ -21,6 +21,17 @@ void cec_tv_request_arc(cec_tv_t *t, bool on, uint32_t now) {
   if (!on) { t->arc = CEC_ARC_STOPPING; t->deadline = now + 4000000; }
   else if (t->arc == CEC_ARC_STOPPING) t->arc = CEC_ARC_OFF;
 }
+void cec_tv_request_playback(cec_tv_t *t, uint32_t now) {
+  t->desired = true;
+  if (t->arc == CEC_ARC_ON) {
+    t->arc_route_request_pending = true;
+    t->system_audio_request_pending = false;
+  } else {
+    t->system_audio_request_pending = true;
+  }
+  t->retry_at = now;
+  if (t->arc == CEC_ARC_STOPPING) t->arc = CEC_ARC_OFF;
+}
 void cec_tv_task(cec_tv_t *t, uint32_t now) {
   if (t->conflict) return;
   if (!t->registered) {
@@ -45,10 +56,23 @@ void cec_tv_task(cec_tv_t *t, uint32_t now) {
   if ((int32_t)(now - t->retry_at) >= 0) {
     if (t->desired && t->arc == CEC_ARC_OFF) {
       uint8_t physical[] = {0, 0};
-      send(t, 5, 0x70, physical, 2, 0); // System Audio Mode Request
+      if (!send(t, 5, 0x70, physical, 2, 0)) return;
+      t->system_audio_request_pending = false;
       if (send(t, 5, 0xc3, NULL, 0, 0)) {
         t->arc = CEC_ARC_REQUESTED; t->deadline = now + 4000000;
       }
+    } else if (t->arc_route_request_pending) {
+      const uint8_t physical[] = {0, 0};
+      // ARC can remain logically active after the Audio System changes its
+      // local input.  Re-select the TV path without restarting ARC.
+      if (!send(t, 15, 0x86, physical, 2, 0)) return; // Set Stream Path
+      if (send(t, 15, 0x82, physical, 2, 0)) {        // Active Source: TV
+        t->arc_route_request_pending = false;
+      }
+    } else if (t->system_audio_request_pending) {
+      uint8_t physical[] = {0, 0};
+      if (send(t, 5, 0x70, physical, 2, 0))
+        t->system_audio_request_pending = false;
     } else if (!t->desired && t->arc == CEC_ARC_STOPPING) {
       send(t, 5, 0xc4, NULL, 0, 0);
       send(t, 5, 0x70, NULL, 0, 0); // no physical address = System Audio off

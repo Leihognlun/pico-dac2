@@ -168,7 +168,7 @@ CEC 关闭构建无法确认 ARC 状态，GPIO25 保持慢闪。
 
 | 按键 | playing=true | playing=false | LED |
 | --- | --- | --- | --- |
-| B1 | 切为停止，同时释放 CEC 音量键 | 切为播放；若已识别 Soundbar 但 ARC 未连接，立即重新请求 System Audio Mode 与 ARC | 常亮 |
+| B1 | 切为停止，同时释放 CEC 音量键 | 切为播放；ARC未连接时发送System Audio Mode Request并发起ARC，ARC已连接时广播TV路径选择消息 | 常亮 |
 | B2 | 按下时增加下一首命令计数 | 忽略 | 跟随 playing |
 | B3 | 按下/释放设置 CEC 音量加状态 | 忽略 | 跟随 playing |
 | B4 | 按下/释放设置 CEC 音量减状态 | 忽略 | 跟随 playing |
@@ -189,8 +189,14 @@ B1“停止”当前采用保留位置的暂停语义，不回曲首：不消费
 再次播放从当前 WAV 块或完整压缩 burst 开头继续，可能重放该单元的一部分。
 Core1 可继续填满剩余槽位后等待；已提交 DMA 的音频不会立即清空。
 
-B1 停止不调用 ARC 关闭接口，不主动改变 HPD 或停止 SPDIF；B1 恢复播放会立即恢复 ARC 开启意愿，
-已识别逻辑地址 5 时无需等待周期性重试便重新发送 System Audio Mode Request 和 ARC 请求。
+B1停止不调用ARC关闭接口，不主动改变HPD或停止SPDIF；B1恢复播放会立即恢复ARC开启意愿。
+已识别逻辑地址5且ARC未连接时，发送`System Audio Mode Request (0x70)`并按需发送
+`Request ARC Initiation (0xC3)`。ARC已连接时不再重复0x70，而是广播
+`Set Stream Path (0x86, 0.0.0.0)`和`Active Source (0x82, 0.0.0.0)`，尝试让已切换到其他本地输入、
+但没有通过CEC报告状态变化的Soundbar重新选择TV/ARC路径；不同Soundbar对此路由消息的响应仍需实测。
+
+文件EOF后先排空已缓冲音频，再自动进入停止状态：B2–B4 LED熄灭、功能禁用，B1保持常亮，
+ARC会话不主动断开并持续发送当前格式的零音频载波。此后按B1会再次请求System Audio Mode并从当前文件开头重新播放。
 输出已启动且链路许可有效时，保持原采样率、位深和 PCM/Non-PCM 状态：
 PCM 发零样本，压缩模式发 Non-PCM 零载波。
 后者不是有效 AC3/EAC3 静音帧，也未构造专门的 IEC 61937 pause burst。
@@ -290,8 +296,8 @@ CEC 开启时 HID 按键采样直接返回零；第 5 节规则不能视为 USB 
 | 情况 | 当前行为或问题 |
 | --- | --- |
 | 挂载或首次打开失败 | 不启动 SPDIF，继续按键、CEC、诊断；无自动恢复读卡流程 |
-| EOF | Core1 关闭当前文件并等待，Core0 排空队列后补零；不会自动下一首 |
-| EOF 后 B2 | Core1 保持运行，收到命令后按列表循环打开下一首 |
+| EOF | Core1关闭当前文件；Core0排空队列后切换为停止状态并持续发送零音频载波，不自动下一首 |
+| EOF 后按键 | B2–B4按停止规则忽略；B1恢复播放并重新打开当前文件 |
 | LED / 播放状态 | LED 只跟随 playing；EOF、错误、等待 ARC 不自动熄灭 B2–B4；sd_eac3_status 未单独编码 B1 暂停 |
 | 正常播放时切歌 | 使用 Core0/Core1 确认握手后重开和重配；仍需真实多文件实机验证 |
 | 无效或不支持的文件 | 保留实际解析错误并停止该文件，Core1 等待 B2 后继续下一首 |
