@@ -1,7 +1,7 @@
 # CEC / ARC 处理逻辑
 
 本文档描述当前固件作为 HDMI TV 侧设备时的 CEC、ARC、HDMI Detect、HPD 和
-Soundbar 音量控制逻辑。实际行为以 `cec_arc.c`、`cec_tv.c` 和所选 `boards/*.h`
+Soundbar 音量控制逻辑。实际行为以 `src/cec_arc.c`、`src/cec_tv.c` 和所选 `boards/*.h`
 配置为准。
 
 | 设备 | CEC 逻辑地址 | 物理地址 |
@@ -308,8 +308,9 @@ SPDIF/ARC 输出路径。
 - CEC 握手成功不能单独保证某种 Soundbar 或 Atmos 格式兼容；
 - DDC/EDID 及完整板卡接线见 `RP_ZERO_C2.md` 和 `PROGRAM_LOGIC.md`。
 
-CEC 由 `PICODAC_CEC` 控制，默认开启；启用时编译 `cec_wire.c`、`cec_tv.c` 和
-`cec_arc.c`。构建应复用现有 C1/C2 构建目录及缓存的 Pico 工具链，不新建目录或重复
+CEC 由 `PICODAC_CEC` 控制，默认开启；启用时编译 `src/cec_wire.c`、
+`src/cec_tv.c` 和 `src/cec_arc.c`。构建应复用现有 C1/C2 构建目录及缓存的 Pico
+工具链，不新建目录或重复
 下载依赖。回归测试入口为：
 
 ```powershell

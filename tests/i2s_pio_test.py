@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def main():
-    source = Path(__file__).resolve().parents[1] / "i2s_mirror.pio"
+    source = Path(__file__).resolve().parents[1] / "src" / "i2s_mirror.pio"
     labels, instructions = {}, []
     for line in source.read_text().splitlines():
         line = line.split(";")[0].strip()

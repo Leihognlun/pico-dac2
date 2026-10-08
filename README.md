@@ -4,12 +4,24 @@ Language: [English](README.md) | [日本語](README.ja.md)
 
 This project provides firmware to enable the Raspberry Pi Pico as a USB DAC (Digital-to-Analog Converter). It supports USB Audio Class 2.0 (UAC2), allowing it to be used as a high-quality audio output device simply by connecting it to a host such as a PC or smartphone.
 
+## Project layout
+
+| Directory | Contents |
+| --- | --- |
+| `src/` | Firmware C sources, headers, and PIO programs |
+| `boards/` | C1/C2 GPIO assignments and CMake board selection |
+| `docs/` | Hardware, CEC/ARC, playback, diagnostics, and status documentation |
+| `tests/` | Host-side regression tests and Pico SDK stubs |
+| `tools/` | Host utilities |
+| `assets/` | Sample media and other non-source assets |
+| `build/` | Existing generated build trees and dependency caches |
+
 ## Features
 
 - **ARC test branch (`arc-tx-eac3`):** CEC TV at GPIO18 (physical pin 24),
   SPDIF-to-external-ARC circuit at GPIO8. CEC is enabled by default and requires
   SPDIF-only output; I2S is disabled. GPIO10 toggles ARC, GPIO26/27 control Soundbar
-  volume. See [CEC/ARC wiring, firmware and limitations](CEC_ARC.md).
+  volume. See [CEC/ARC wiring, firmware and limitations](docs/CEC_ARC.md).
   This addition is not yet hardware-validated; earlier playback results below
   refer to the non-CEC baseline. Use `PICODAC_CEC=OFF` for legacy output modes.
 
@@ -18,14 +30,14 @@ This project provides firmware to enable the Raspberry Pi Pico as a USB DAC (Dig
   (SCLK=2, MOSI=3, MISO=4, CS=5), package IEC 61937 and output a 192 kHz
   SPDIF carrier. Default file: `0:/TRACK.EC3`. USB remains the default input;
   the standalone build does not enumerate as a USB sound card.
-  See [TF wiring, build and limitations (中文)](SD_EAC3.md).
+  See [TF wiring, build and limitations (中文)](docs/SD_EAC3.md).
 - **Optional legacy synchronized I2S + SPDIF output:** SPDIF GPIO 22;
   I2S DATA=18, BCLK=16, LRCLK=17. PCM plays on both outputs; AC-3/DTS
   plays only on SPDIF while I2S sends zeros with its clocks running.
   Stereo 44.1/48/88.2/96 kHz,
   16/24-bit output; 32-bit USB samples are truncated to their upper 24 bits.
   Select `PICODAC_OUTPUT=BOTH`, `SPDIF`, or `I2S` at build time.
-  See [SPDIF setup and validation (中文)](SPDIF.md).
+  See [SPDIF setup and validation (中文)](docs/SPDIF.md).
 - **Dolby Digital / DTS passthrough:** The SPDIF build exposes UAC2 Type III
   AC-3 and DTS-I/II/III formats. Alternate settings 4/5/6/7 additionally support
   a 192 kHz stereo/16-bit carrier in BOTH and SPDIF builds. All alternate
@@ -34,13 +46,13 @@ This project provides firmware to enable the Raspberry Pi Pico as a USB DAC (Dig
   Already-packed IEC 61937 data bypasses software
   volume/mute and is transmitted with Non-PCM channel status. Requires a
   passthrough-capable player and an AC-3/DTS receiver; this firmware does not
-  encode multichannel PCM. See [setup and limitations](SPDIF.md#dolby-digital--dts-透传).
+  encode multichannel PCM. See [setup and limitations](docs/SPDIF.md#dolby-digital--dts-透传).
 - **User-verified on the current firmware (`bcdDevice=0x010a`):** Windows
   recognizes the sound card; E-AC-3 (Dolby Digital Plus) and Dolby Atmos
   passthrough work on the user's Raspberry Pi Linux playback setup.
   The USB descriptors still advertise AC-3/DTS, not a separate E-AC-3 format.
   This result does not establish Windows E-AC-3/Atmos playback, TrueHD Atmos,
-  or compatibility with every player/receiver. See [test details](SPDIF.md).
+  or compatibility with every player/receiver. See [test details](docs/SPDIF.md).
 - **USB Audio Class 2.0 Compliant:**
   - Works on many operating systems (Windows, macOS, Linux) without requiring driver installation.
   - Supports flow control via the Feedback Endpoint.
@@ -122,7 +134,7 @@ set (PICODAC_I2S_BASE_CLOCK_PIN 16 CACHE STRING "I2S Base Clock Pin. LRCLK is BA
 ## Usage
 
 1. Connect the SPDIF transmitter to GPIO 22 and GND as described in
-   [SPDIF.md](SPDIF.md), or connect your I2S DAC when building with
+   [SPDIF.md](docs/SPDIF.md), or connect your I2S DAC when building with
    `-DPICODAC_CEC=OFF -DPICODAC_OUTPUT=I2S`. A legacy `BOTH` build can drive both devices.
 2. Connect the Pico with the flashed firmware to a host (e.g., PC) via USB.
 3. The host OS will automatically recognize a new audio output device named `mdac_adc2` (or similar).

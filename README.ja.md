@@ -4,13 +4,25 @@ Language: [English](README.md) | [日本語](README.ja.md)
 
 Raspberry Pi Pico を USB DAC（Digital-to-Analog Converter）として機能させるためのファームウェアです。USB Audio Class 2.0（UAC2）に対応しており、PC やスマートフォンなどのホストに接続するだけで、高品質なオーディオ出力デバイスとして利用できます。
 
+## ディレクトリ構成
+
+| ディレクトリ | 内容 |
+| --- | --- |
+| `src/` | ファームウェアの C ソース、ヘッダー、PIO プログラム |
+| `boards/` | C1/C2 の GPIO 定義と CMake ボード選択 |
+| `docs/` | ハードウェア、CEC/ARC、再生、診断、状態表示の文書 |
+| `tests/` | ホスト回帰テストと Pico SDK スタブ |
+| `tools/` | ホスト用ツール |
+| `assets/` | サンプル音声などの非ソース資産 |
+| `build/` | 既存の生成済みビルドと依存関係キャッシュ |
+
 ## 主な特徴
 
 - **TF カードからの E-AC-3 再生（オプション）:** `PICODAC_INPUT=SD_EAC3` で
   SPI0（SCLK=2、MOSI=3、MISO=4、CS=5）のカードから裸の 48 kHz E-AC-3 を読み、
   192 kHz IEC 61937 キャリアとして SPDIF 出力します。既定ファイルは `0:/TRACK.EC3`。
   この単独再生モードでは USB サウンドカードを起動しません。
-  [接続・ビルド・制限（中国語）](SD_EAC3.md) を参照してください。
+  [接続・ビルド・制限（中国語）](docs/SD_EAC3.md) を参照してください。
 - **I2S + SPDIF 同時出力（既定）:** `PICODAC_OUTPUT=BOTH`。
   SPDIF は GPIO 22、I2S は DATA=18、BCLK=16、LRCLK=17 です。
   PCM は両方に出力し、圧縮音声の透過転送時は SPDIF のみにデータを送り、
@@ -24,7 +36,7 @@ Raspberry Pi Pico を USB DAC（Digital-to-Analog Converter）として機能さ
   Raspberry Pi Linux での E-AC-3 / Dolby Atmos 透過転送が確認されています。
   USB の形式宣言は引き続き AC-3/DTS であり、独立した E-AC-3 形式は追加していません。
   Windows での E-AC-3/Atmos 再生や TrueHD Atmos、すべての機器での動作を示す結果ではありません。
-  詳細は [SPDIF の設定と検証（中国語）](SPDIF.md) を参照してください。
+  詳細は [SPDIF の設定と検証（中国語）](docs/SPDIF.md) を参照してください。
 - **USB Audio Class 2.0 対応:**
   - ドライバーのインストールなしで多くの OS（Windows, macOS, Linux）で動作します。
   - Feedback Endpoint によるフロー制御に対応
@@ -104,7 +116,7 @@ set (PICODAC_I2S_BASE_CLOCK_PIN 16 CACHE STRING "I2S Base Clock Pin. LRCLK is BA
 
 ## 使い方
 
-1. [SPDIF.md](SPDIF.md) に従って SPDIF 送信回路を接続するか、設定した GPIO に I2S DAC を接続します。
+1. [SPDIF.md](docs/SPDIF.md) に従って SPDIF 送信回路を接続するか、設定した GPIO に I2S DAC を接続します。
 2. ファームウェアを書き込んだ Pico をホスト（PC など）に USB で接続します。
 3. ホストの OS は、`mdac_adc2`（または同様の名前）という新しいオーディオ出力デバイスを自動的に認識します。
 4. OS のサウンド設定で、このデバイスを出力先に選択し、音楽などを再生してください。

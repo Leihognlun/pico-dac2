@@ -93,7 +93,7 @@ E-AC-3 converted stream；帧的音频块数支持 1、2、3、6，按六块组�
 [pico_fatfs](https://github.com/elehobica/pico_fatfs/tree/417fca7fa519a915a7a697e3edf7b9a183243eaa)，
 固定提交 `417fca7fa519a915a7a697e3edf7b9a183243eaa`，需要 Git 和网络。
 也可通过 `-DFETCHCONTENT_SOURCE_DIR_PICO_FATFS=<该提交的本地绝对路径>` 使用已有源码。
-USB 模式不会获取或链接此依赖。第三方许可见 [LICENSE.pico-fatfs](LICENSE.pico-fatfs)。
+USB 模式不会获取或链接此依赖。第三方许可见 [LICENSE.pico-fatfs](../LICENSE.pico-fatfs)。
 
 可选参数：
 
@@ -155,7 +155,7 @@ PIO 的 1/256 分频单位值为 `120000000 / 192000 = 625`，消除平均分频
 | 字段 | 含义 |
 | --- | --- |
 | `t_ms` | 诊断启动后的毫秒数（约 71 分钟回绕） |
-| `st` | 播放状态：0 预缓冲、1 播放、2 EOF，负数见 `eac3_burst.h` |
+| `st` | 播放状态：0 预缓冲、1 播放、2 EOF，负数见 `src/eac3_burst.h` |
 | `ph` | 读线程阶段：0 初始化、1 挂载、2 打开、3 读卡、4 封装、5 等待空队列槽、6 读取结束 |
 | `q` / `qmin` | 当前已发布但未释放的突发槽数／本报告间隔最低值，范围 0–4，包含正在消费的槽 |
 | `prod` / `play` | 累计生产／完整提交给 SPDIF 的突发数；正常持续播放每秒约 31–32 个 |
@@ -200,7 +200,7 @@ UART0 TX=GPIO0，115200 波特率，3.3 V 串口、共地。
 
 | 变量 | 含义 |
 | --- | --- |
-| `sd_eac3_status` | 0 等待，1 播放，2 EOF 后零载波，负数为错误（见 `eac3_burst.h`） |
+| `sd_eac3_status` | 0 等待，1 播放，2 EOF 后零载波，负数为错误（见 `src/eac3_burst.h`） |
 | `sd_eac3_bursts_played` | 已完整提交给 SPDIF 后端的文件突发数（不等于已到达功放） |
 | `sd_eac3_underruns` | 读线程尚未结束但突发队列为空的周期数 |
 | `spdif_silence_block_count` | DMA 未及时得到编码块的次数，启动也可能增长 |

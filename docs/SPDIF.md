@@ -1,7 +1,7 @@
 # SPDIF 输出
 
 新增 DDC EDID：I2C1 从设备 `0x50`，GPIO6=SDA、GPIO7=SCL，原样内置用户提供的
-256 字节 EDID；接线、电平转换和读取方式见 [DDC/EDID 说明](CEC_ARC.md#ddc--edid-从设备)。
+256 字节 EDID；接线、电平转换和读取方式见 [CEC/ARC 说明](CEC_ARC.md)。
 
 `arc-tx-eac3` 分支默认启用 **CEC TV / ARC TX**：SPDIF 改为 GPIO8，CEC 为
 **GPIO18（Pico 物理脚 24，不是物理脚 18）**，默认 `PICODAC_OUTPUT=SPDIF`，
@@ -97,7 +97,7 @@ SPDIF 编码前的 PCM 同时转换为 I2S 数据；不会把 SPDIF 的 BMC 编�
 32 位 USB 输入在两路均保留高 24 位，让两路有效样本保持一致。
 单独的 I2S 模式仍沿用原有 16/24/32 位时隙实现。
 
-`i2s_mirror.pio` 和 SPDIF PIO 都使用每帧 256 个周期、完全相同的分频值，
+`src/i2s_mirror.pio` 和 SPDIF PIO 都使用每帧 256 个周期、完全相同的分频值，
 并在 PIO0 上同步启动。两路 DMA 共用 192 帧块调度：先完成的一路选择下一块，
 后完成的一路使用同一块；两路都读完旧块后才释放其存储空间。无新块时两路一起选用零填充。
 这样不需要分别消费 USB 数据，也没有两套独立分频器取整造成的累计采样率漂移。
@@ -119,9 +119,9 @@ BOTH/SPDIF 构建在停止状态或 Type III 透传期间还接受 192000 Hz。
 192 kHz 下不能直接切入 PCM，主机需先将共享时钟设回受支持的 PCM 速率。
 拒绝不兼容的接口切换时保持原端点和接口状态。I2S 单输出仍只提供四档 PCM 速率。
 
-`spdif_encode.c` 生成完整的 192 帧块，包含 B/M/W 前导码、有效性位、声道状态及偶校验。
+`src/spdif_encode.c` 生成完整的 192 帧块，包含 B/M/W 前导码、有效性位、声道状态及偶校验。
 声道状态随输入格式更新 PCM/Non-PCM、采样率和有效位数。
-`spdif.c` 的单输出模式使用 PIO0 的一个状态机和一个 DMA 通道；
+`src/spdif.c` 的单输出模式使用 PIO0 的一个状态机和一个 DMA 通道；
 双输出模式使用 PIO0 的两个状态机和两个 DMA 通道，共用 DMA IRQ1，LED 仍使用 PIO1。
 编码完成的缓冲区才交给 DMA；没有新块时发送完整静音块，保持块边界。
 停止 USB 音频接口后关闭输出，GPIO 拉低；静止状态不维持接收器锁定。
@@ -260,8 +260,8 @@ python tests/run_tests.py
   §6.1.3/6.1.4，有效性位及 Non-PCM 声道状态位。
 - [pico-extras audio_spdif](https://github.com/raspberrypi/pico-extras/tree/52fd7a786ce47c989afeaee67e0c6aebee56ed2d/src/rp2_common/pico_audio_spdif)：
   参考 NRZI/BMC 编码、前导码与 PIO 方案。其音频池接口主要支持 16 位 PCM，
-  本工程使用独立的 16/24/32 位输入适配器。`spdif.pio` 保留上游版权声明，
-  对应许可见 [LICENSE.pico-extras](LICENSE.pico-extras)。
+  本工程使用独立的 16/24/32 位输入适配器。`src/spdif.pio` 保留上游版权声明，
+  对应许可见 [LICENSE.pico-extras](../LICENSE.pico-extras)。
 - [pico-sdk hardware_dma](https://github.com/raspberrypi/pico-sdk/tree/079c6f39023649b154152db30f1d781e884879bc/src/rp2_common/hardware_dma)：
   使用 SDK 的 DMA、PIO、时钟及 IRQ API；本次固件构建使用本机 SDK 2.3.1。
 - [pico-examples pio/uart_dma](https://github.com/raspberrypi/pico-examples/tree/0d62f75bafc2c8120d3276c3343d1a9195e909e9/pio/uart_dma)：

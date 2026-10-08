@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(APP_NAME "mdac_adc2")
 set(BOARD_NAME "rp2040" CACHE STRING "Target board name")
+set(PICODAC_SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/src")
 
 set(PICODAC_INPUT "USB" CACHE STRING "Audio source: USB or SD_AUDIO")
 set_property(CACHE PICODAC_INPUT PROPERTY STRINGS USB SD_AUDIO)
@@ -100,9 +101,9 @@ endif()
     pico_sdk_init()
 
     add_executable(mdac_adc2
-        main.c
-        board_status.c
-        board_panic.c
+        src/main.c
+        src/board_status.c
+        src/board_panic.c
     )
     target_compile_definitions(mdac_adc2 PRIVATE
         PICODAC_ERROR_LED_GAP_MS=${PICODAC_ERROR_LED_GAP_MS}
@@ -112,16 +113,16 @@ endif()
         PICO_DEFAULT_UART=0 PICO_DEFAULT_UART_TX_PIN=${BOARD_UART_TX}
         PICO_DEFAULT_UART_RX_PIN=${BOARD_UART_RX})
     if(PICODAC_BOARD STREQUAL "c2")
-        target_sources(mdac_adc2 PRIVATE sd_controls.c)
+        target_sources(mdac_adc2 PRIVATE src/sd_controls.c)
     endif()
     target_compile_definitions(mdac_adc2 PRIVATE PICODAC_CEC=$<BOOL:${PICODAC_CEC}>)
     target_compile_definitions(mdac_adc2 PRIVATE PICODAC_DDC=$<BOOL:${PICODAC_DDC}>)
     if(PICODAC_DDC)
-        target_sources(mdac_adc2 PRIVATE ddc_edid.c ddc_edid_data.c)
+        target_sources(mdac_adc2 PRIVATE src/ddc_edid.c src/ddc_edid_data.c)
         target_link_libraries(mdac_adc2 pico_i2c_slave hardware_i2c)
     endif()
     if(PICODAC_CEC)
-        target_sources(mdac_adc2 PRIVATE cec_wire.c cec_tv.c cec_arc.c)
+        target_sources(mdac_adc2 PRIVATE src/cec_wire.c src/cec_tv.c src/cec_arc.c)
         target_compile_definitions(mdac_adc2 PRIVATE PICODAC_CEC_PIN=${PICODAC_CEC_PIN})
     endif()
     if(PICODAC_INPUT STREQUAL "SD_AUDIO")
@@ -131,12 +132,13 @@ endif()
             GIT_TAG 417fca7fa519a915a7a697e3edf7b9a183243eaa
         )
         FetchContent_MakeAvailable(pico_fatfs)
-        target_sources(mdac_adc2 PRIVATE eac3_burst.c ac3_burst.c wav_reader.c sd_eac3_player.c)
+        target_sources(mdac_adc2 PRIVATE src/eac3_burst.c src/ac3_burst.c
+            src/wav_reader.c src/sd_eac3_player.c)
         if(NOT PICODAC_BOARD STREQUAL "c2")
-            target_sources(mdac_adc2 PRIVATE sd_controls.c)
+            target_sources(mdac_adc2 PRIVATE src/sd_controls.c)
         endif()
         if(PICODAC_SD_DIAGNOSTICS)
-            target_sources(mdac_adc2 PRIVATE sd_diagnostics.c)
+            target_sources(mdac_adc2 PRIVATE src/sd_diagnostics.c)
             target_link_libraries(mdac_adc2 hardware_uart)
             target_compile_definitions(mdac_adc2 PRIVATE PICODAC_SD_DIAGNOSTICS=1
                 PICODAC_SD_UART_LOG=$<BOOL:${PICODAC_SD_UART_LOG}>
@@ -155,17 +157,18 @@ endif()
             PICODAC_SD_BENCHMARK=$<BOOL:${PICODAC_SD_BENCHMARK}>
         )
     else()
-        target_sources(mdac_adc2 PRIVATE audio_device.c ringbuffer.c usb.c usb_audio.c usb_hid.c)
+        target_sources(mdac_adc2 PRIVATE src/audio_device.c src/ringbuffer.c
+            src/usb.c src/usb_audio.c src/usb_hid.c)
         target_compile_definitions(mdac_adc2 PRIVATE PICODAC_INPUT_SD=0)
     endif()
     if(PICODAC_BOARD STREQUAL "c2")
-        target_sources(mdac_adc2 PRIVATE spdif_dual.c)
+        target_sources(mdac_adc2 PRIVATE src/spdif_dual.c)
     else()
-        target_sources(mdac_adc2 PRIVATE spdif.c)
+        target_sources(mdac_adc2 PRIVATE src/spdif.c)
     endif()
-    target_sources(mdac_adc2 PRIVATE spdif_encode.c)
+    target_sources(mdac_adc2 PRIVATE src/spdif_encode.c)
     target_compile_definitions(mdac_adc2 PRIVATE PICODAC_OUTPUT_SPDIF=1 PICODAC_OUTPUT_BOTH=0)
-    pico_generate_pio_header(mdac_adc2 ${CMAKE_CURRENT_LIST_DIR}/spdif.pio)
+    pico_generate_pio_header(mdac_adc2 ${PICODAC_SRC_DIR}/spdif.pio)
     # Add the standard library to the build
     target_link_libraries(mdac_adc2
         hardware_dma
@@ -185,6 +188,7 @@ endif()
     target_include_directories(mdac_adc2
     PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+        ${PICODAC_SRC_DIR}
     )
 
 

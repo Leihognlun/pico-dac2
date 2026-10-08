@@ -1,7 +1,7 @@
 # RP-ZERO-C1 / C2 board 配置
 
 使用 `-DPICODAC_BOARD=c1` 或 `-DPICODAC_BOARD=c2` 选择板子，默认 `c1`。
-GPIO 定义集中在 `boards/c1.h` 和 `boards/c2.h`，`board.h` 选择对应配置，
+GPIO 定义集中在 `boards/c1.h` 和 `boards/c2.h`，`src/board.h` 选择对应配置，
 `boards/select.cmake` 读取同一份定义并校验引脚冲突。
 `PICODAC_BOARD` 是应用接线配置，与 Pico SDK 的 `PICO_BOARD` 独立。
 旧的单独 GPIO CMake 参数由所选 board 配置取代；修改接线应修改相应 board 文件。

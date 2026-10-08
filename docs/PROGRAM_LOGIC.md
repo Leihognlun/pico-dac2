@@ -77,7 +77,7 @@ DMA 使用动态通道、32 位传输、PIO TX DREQ 和最高优先级的 DMA_IR
 
 ## 3. 上电初始化
 
-入口：[main.c](main.c)。
+入口：[main.c](../src/main.c)。
 
 ```mermaid
 flowchart TD
@@ -101,7 +101,7 @@ DDC 先于读卡初始化，TF 失败不阻止 EDID 读取。
 
 ## 4. TF 文件发现、格式与双核缓冲
 
-实现：[sd_eac3_player.c](sd_eac3_player.c)。只有 Core1 访问 FatFs。
+实现：[sd_eac3_player.c](../src/sd_eac3_player.c)。只有 Core1 访问 FatFs。
 
 挂载后扫描 TF 根目录，跳过子目录，按扩展名不区分大小写收集
 `.wav`、`.ac3`、`.ec3`、`.eac3`，最多 32 首。
@@ -168,7 +168,7 @@ GPIO25 绿色 LED 正常常亮；TF 读取或音频文件错误每轮亮灭各 4
 轮间隔默认 2 秒且可配置。普通 EOF 和播放停止不报错。
 完整错误次数与配置见 [LED_STATUS.md](LED_STATUS.md)。
 
-实现：[sd_controls.c](sd_controls.c)。规则仅接入 TF 模式。
+实现：[sd_controls.c](../src/sd_controls.c)。规则仅接入 TF 模式。
 按键输入上拉、低有效、20 ms 消抖；LED− 固定低，LED+ 高时点亮。
 
 | 按键 | playing=true | playing=false | LED |
@@ -209,8 +209,9 @@ PCM 发零样本，压缩模式发 Non-PCM 零载波。
 
 ## 6. SPDIF、CEC 与 HDMI 链路
 
-实现：[spdif.c](spdif.c)、[spdif_encode.c](spdif_encode.c)、[cec_arc.c](cec_arc.c)、
-[cec_tv.c](cec_tv.c)、[cec_wire.c](cec_wire.c)。
+实现：[spdif.c](../src/spdif.c)、[spdif_encode.c](../src/spdif_encode.c)、
+[cec_arc.c](../src/cec_arc.c)、[cec_tv.c](../src/cec_tv.c)、
+[cec_wire.c](../src/cec_wire.c)。
 
 每个 SPDIF 编码块为 768 个 uint32，即 3072 字节。
 Core0 编码完成后发布，DMA 接续已发布数据；无数据时使用预编码零块并累计 silence。
@@ -268,7 +269,7 @@ CEC=OFF 时相关初始化与任务为空，音频许可接口返回 true，也�
 
 ## 7. DDC EDID
 
-实现：[ddc_edid.c](ddc_edid.c)、[ddc_edid_data.c](ddc_edid_data.c)。
+实现：[ddc_edid.c](../src/ddc_edid.c)、[ddc_edid_data.c](../src/ddc_edid_data.c)。
 
 I2C1 从地址 0x50，初始化参数 100 kHz，实际总线时钟由 Soundbar 主机提供。
 写事务首字节设置偏移，后续写入丢弃。读请求逐字节返回 Flash 中 256 字节 EDID；
@@ -277,7 +278,8 @@ I2C1 从地址 0x50，初始化参数 100 kHz，实际总线时钟由 Soundbar �
 
 ## 8. USB 声卡模式
 
-实现：[usb.c](usb.c)、[usb_audio.c](usb_audio.c)、[audio_device.c](audio_device.c)。
+实现：[usb.c](../src/usb.c)、[usb_audio.c](../src/usb_audio.c)、
+[audio_device.c](../src/audio_device.c)。
 
 USB 中断复制 DPRAM 数据包快照并重新准备接收，主循环丢弃过期流数据包，检查长度、帧对齐，
 转换 int32 样本并写入约 16 ms 环形缓冲。压缩模式由主机提供已封装的 IEC 61937。
@@ -327,8 +329,9 @@ CEC 开启时 HID 按键采样直接返回零；第 5 节规则不能视为 USB 
 | DDC | ddc_read_bytes、ddc_offset_writes、ddc_ignored_writes |
 | SPDIF | spdif_tx_stall_count、spdif_silence_block_count |
 
-格式解析见 [wav_reader.c](wav_reader.c)、[ac3_burst.c](ac3_burst.c)、[eac3_burst.c](eac3_burst.c)。
-构建入口见 [CMakeLists.txt](CMakeLists.txt)，板级简表见 [RP_ZERO_C1.md](RP_ZERO_C1.md)。
+格式解析见 [wav_reader.c](../src/wav_reader.c)、[ac3_burst.c](../src/ac3_burst.c)、
+[eac3_burst.c](../src/eac3_burst.c)。构建入口见 [CMakeLists.txt](../CMakeLists.txt)，
+板级简表见 [RP_ZERO_C1.md](RP_ZERO_C1.md)。
 当前 CEC/ARC 状态机、报文处理、拔线复位及音量控制见 [CEC_ARC.md](CEC_ARC.md)。
 [SD_EAC3.md](SD_EAC3.md) 和 [SPDIF.md](SPDIF.md) 仍包含部分历史信息，其中旧 GPIO
 与旧分支配置不可直接用于 RP-ZERO-C1。

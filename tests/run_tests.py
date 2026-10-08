@@ -14,53 +14,54 @@ def main():
     build = root / "build" / "host-tests"
     build.mkdir(parents=True, exist_ok=True)
     subprocess.run([sys.executable, str(root / "tests/media_controls_test.py")], check=True)
-    common = [args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", str(root)]
+    common = [args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
+              "-I", str(root), "-I", str(root / "src")]
     cases = [
         ("button_led", ["-I", str(root / "tests/sd_stubs")],
          ["tests/button_led_test.c"]),
         ("status_c1", ["-I", str(root / "tests/sd_stubs")],
-         ["tests/board_status_test.c", "board_status.c"]),
+         ["tests/board_status_test.c", "src/board_status.c"]),
         ("status_c2", ["-I", str(root / "tests/sd_stubs"), "-DPICODAC_BOARD_C2=1"],
-         ["tests/board_status_test.c", "board_status.c"]),
+         ["tests/board_status_test.c", "src/board_status.c"]),
         ("status_timing", ["-I", str(root / "tests/sd_stubs"), "-DPICODAC_ERROR_LED_GAP_MS=350", "-DPICODAC_ERROR_LED_STEP_MS=75"],
-         ["tests/board_status_test.c", "board_status.c"]),
+         ["tests/board_status_test.c", "src/board_status.c"]),
         ("c2_spdif", ["-I", str(root / "tests/spdif_stubs"), "-DPICODAC_INPUT_SD=1", "-DPICODAC_BOARD_C2=1"],
-         ["tests/c2_spdif_test.c", "spdif_encode.c"]),
+         ["tests/c2_spdif_test.c", "src/spdif_encode.c"]),
         ("c2_hid", ["-I", str(root / "tests/stubs"), "-DPICODAC_BOARD_C2=1", "-DPICODAC_CEC=1", "-DHID_ENABLE=1", "-DPICODAC_OUTPUT_SPDIF=1", "-DLOG_LEVEL=0"],
-         ["tests/audio_diagnostics_test.c", "usb_hid.c"]),
+         ["tests/audio_diagnostics_test.c", "src/usb_hid.c"]),
         ("c2_descriptors", ["-DPICODAC_BOARD_C2=1", "-DPICODAC_OUTPUT_SPDIF=1", "-DHID_ENABLE=1"],
          ["tests/usb_descriptors_test.c"]),
         ("c2_arc", ["-I", str(root / "tests/arc_stubs"), "-DPICODAC_CEC=1", "-DPICODAC_BOARD_C2=1"],
-         ["tests/c2_arc_test.c", "cec_tv.c", "cec_wire.c", "board_status.c"]),
+         ["tests/c2_arc_test.c", "src/cec_tv.c", "src/cec_wire.c", "src/board_status.c"]),
         ("c2_controls", ["-I", str(root / "tests/sd_stubs"), "-DPICODAC_CEC=1", "-DPICODAC_BOARD_C2=1"],
-         ["tests/c2_controls_test.c", "sd_controls.c"]),
+         ["tests/c2_controls_test.c", "src/sd_controls.c"]),
         ("c2_ddc", ["-I", str(root / "tests/ddc_stubs"), "-DPICODAC_DDC=1", "-DPICODAC_BOARD_C2=1"],
-         ["tests/c2_ddc_test.c", "ddc_edid.c", "ddc_edid_data.c"]),
-        ("dual_queue", [], ["tests/dual_output_test.c", "spdif_encode.c"]),
+         ["tests/c2_ddc_test.c", "src/ddc_edid.c", "src/ddc_edid_data.c"]),
+        ("dual_queue", [], ["tests/dual_output_test.c", "src/spdif_encode.c"]),
         ("ddc", ["-I", str(root / "tests/ddc_stubs"), "-DPICODAC_DDC=1"],
-         ["tests/ddc_test.c", "ddc_edid.c", "ddc_edid_data.c"]),
-        ("cec", [], ["tests/cec_test.c", "cec_tv.c", "cec_wire.c"]),
+         ["tests/ddc_test.c", "src/ddc_edid.c", "src/ddc_edid_data.c"]),
+        ("cec", [], ["tests/cec_test.c", "src/cec_tv.c", "src/cec_wire.c"]),
         ("sd_diagnostics", ["-I", str(root / "tests/sd_stubs"), "-DPICODAC_SD_DIAGNOSTICS=1"],
-         ["tests/sd_diagnostics_test.c", "sd_diagnostics.c"]),
-        ("eac3_burst", [], ["tests/eac3_burst_test.c", "eac3_burst.c", "spdif_encode.c"]),
-        ("sd_audio_formats", [], ["tests/sd_audio_formats_test.c", "wav_reader.c", "ac3_burst.c"]),
+         ["tests/sd_diagnostics_test.c", "src/sd_diagnostics.c"]),
+        ("eac3_burst", [], ["tests/eac3_burst_test.c", "src/eac3_burst.c", "src/spdif_encode.c"]),
+        ("sd_audio_formats", [], ["tests/sd_audio_formats_test.c", "src/wav_reader.c", "src/ac3_burst.c"]),
         ("sd_controls", ["-I", str(root / "tests/sd_stubs"), "-DPICODAC_CEC=1"],
-         ["tests/sd_controls_test.c", "sd_controls.c"]),
+         ["tests/sd_controls_test.c", "src/sd_controls.c"]),
         ("usb_control_state", [], ["tests/usb_control_state_test.c"]),
         ("usb_audio_packet", [], ["tests/usb_audio_packet_test.c"]),
         ("diagnostics_spdif", ["-I", str(root / "tests/stubs"), "-DHID_ENABLE=1", "-DPICODAC_OUTPUT_SPDIF=1", "-DLOG_LEVEL=0"],
-         ["tests/audio_diagnostics_test.c", "usb_hid.c"]),
+         ["tests/audio_diagnostics_test.c", "src/usb_hid.c"]),
         ("usb_buffer_control", ["-I", str(root / "tests/stubs")],
          ["tests/usb_buffer_control_test.c"]),
-        ("spdif_encode", [], ["spdif_encode.c", "tests/spdif_encode_test.c"]),
+        ("spdif_encode", [], ["src/spdif_encode.c", "tests/spdif_encode_test.c"]),
         ("descriptors_spdif", ["-DPICODAC_OUTPUT_SPDIF=1", "-DHID_ENABLE=1"],
          ["tests/usb_descriptors_test.c"]),
         ("passthrough", ["-I", str(root / "tests/stubs"),
                          "-DPICODAC_OUTPUT_SPDIF=1", "-DPICODAC_SPDIF_PIN=22",
                          "-DPICODAC_I2S_DATA_PIN=18", "-DPICODAC_I2S_BASE_CLOCK_PIN=16",
                          "-DLOG_LEVEL=0"],
-         ["tests/usb_audio_passthrough_test.c", "usb_audio.c", "audio_device.c",
-          "ringbuffer.c", "spdif_encode.c"]),
+         ["tests/usb_audio_passthrough_test.c", "src/usb_audio.c", "src/audio_device.c",
+          "src/ringbuffer.c", "src/spdif_encode.c"]),
     ]
     for name, flags, sources in cases:
         binary = build / (name + (".exe" if os.name == "nt" else ""))
@@ -75,8 +76,9 @@ def main():
              "-DPICODAC_TEST_EXIT_ON_EOF=1"]
     if os.name != "nt":
         flags += ["-pthread", "-D_POSIX_C_SOURCE=200809L"]
-    sd_sources = ["tests/sd_player_test.c", "sd_eac3_player.c", "eac3_burst.c",
-                  "ac3_burst.c", "wav_reader.c", "sd_controls.c", "board_status.c"]
+    sd_sources = ["tests/sd_player_test.c", "src/sd_eac3_player.c", "src/eac3_burst.c",
+                  "src/ac3_burst.c", "src/wav_reader.c", "src/sd_controls.c",
+                  "src/board_status.c"]
     subprocess.run(common + flags + sd_sources + ["-o", str(binary)], cwd=root, check=True)
     for scenario in range(6):
         subprocess.run([str(binary), str(scenario)], cwd=root, check=True, timeout=15)

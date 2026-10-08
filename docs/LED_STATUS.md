@@ -38,12 +38,12 @@ cmake --build build/dev-zero-c2-tf
 ```
 
 `PICODAC_ERROR_LED_GAP_MS` 配置轮间隔，`PICODAC_ERROR_LED_STEP_MS` 配置单次亮或灭的时长，
-单位毫秒，允许 1..60000。错误次数定义在 `board_status.h` 的 `board_error_t` 中。
+单位毫秒，允许 1..60000。错误次数定义在 `src/board_status.h` 的 `board_error_t` 中。
 
 正常主循环通过 `board_status_task()` 更新灯，不使用阻塞延时或 PIO。
 TF Core1 的错误通过已有原子状态交给 Core0 显示。
 `board_error_code` 可在调试器中查看当前显示码。
-`board_panic.c` 使用 Pico SDK 的自定义 panic 入口，在故障上下文自行循环闪码，
+`src/board_panic.c` 使用 Pico SDK 的自定义 panic 入口，在故障上下文自行循环闪码，
 不依赖主循环、中断回调或 stdio 锁；原始格式字符串保存在 `board_panic_message`。
 此入口不再进行默认 panic 的格式化串口打印，也不宣称捕获所有 HardFault 或断电故障。
 # 播放按钮的待机灯配置
