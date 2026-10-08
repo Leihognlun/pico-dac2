@@ -2,6 +2,7 @@
 #include <stdint.h>
 typedef struct { int unused; } i2c_inst_t;
 extern i2c_inst_t *i2c1;
+extern i2c_inst_t *i2c0;
 typedef enum { I2C_SLAVE_RECEIVE, I2C_SLAVE_REQUEST, I2C_SLAVE_FINISH } i2c_slave_event_t;
 typedef void (*i2c_slave_handler_t)(i2c_inst_t *, i2c_slave_event_t);
 void i2c_init(i2c_inst_t *, unsigned);

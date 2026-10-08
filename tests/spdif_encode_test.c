@@ -63,6 +63,16 @@ int main(void) {
   int32_t samples[384];
   uint32_t random = 12345;
   spdif_encode_init();
+  for (unsigned mode = 0; mode < 2; ++mode) {
+    uint32_t idle[SPDIF_BLOCK_WORDS];
+    spdif_encode_idle_block(idle, mode ? 16 : 24, 48000, mode);
+    for (unsigned i = 0; i < SPDIF_BLOCK_FRAMES * 2; ++i) {
+      uint32_t data = decode(idle + i * 2);
+      assert((data & 0x0ffffff0u) == 0);
+      assert((data & 0x10000000u) != 0);
+    }
+    assert(((decode(idle + 4) >> 30) & 1) == mode);
+  }
   for (unsigned d = 0; d < 3; ++d) {
     unsigned depth = depths[d];
     for (unsigned i = 0; i < 384; ++i) {

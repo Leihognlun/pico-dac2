@@ -16,6 +16,27 @@ def main():
     subprocess.run([sys.executable, str(root / "tests/media_controls_test.py")], check=True)
     common = [args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", str(root)]
     cases = [
+        ("button_led", ["-I", str(root / "tests/sd_stubs")],
+         ["tests/button_led_test.c"]),
+        ("status_c1", ["-I", str(root / "tests/sd_stubs")],
+         ["tests/board_status_test.c", "board_status.c"]),
+        ("status_c2", ["-I", str(root / "tests/sd_stubs"), "-DPICODAC_BOARD_C2=1"],
+         ["tests/board_status_test.c", "board_status.c"]),
+        ("status_timing", ["-I", str(root / "tests/sd_stubs"), "-DPICODAC_ERROR_LED_GAP_MS=350", "-DPICODAC_ERROR_LED_STEP_MS=75"],
+         ["tests/board_status_test.c", "board_status.c"]),
+        ("c2_spdif", ["-I", str(root / "tests/spdif_stubs"), "-DPICODAC_INPUT_SD=1", "-DPICODAC_BOARD_C2=1"],
+         ["tests/c2_spdif_test.c", "spdif_encode.c"]),
+        ("c2_hid", ["-I", str(root / "tests/stubs"), "-DPICODAC_BOARD_C2=1", "-DPICODAC_CEC=1", "-DHID_ENABLE=1", "-DPICODAC_OUTPUT_SPDIF=1", "-DLOG_LEVEL=0"],
+         ["tests/audio_diagnostics_test.c", "usb_hid.c"]),
+        ("c2_descriptors", ["-DPICODAC_BOARD_C2=1", "-DPICODAC_OUTPUT_SPDIF=1", "-DHID_ENABLE=1"],
+         ["tests/usb_descriptors_test.c"]),
+        ("c2_arc", ["-I", str(root / "tests/arc_stubs"), "-DPICODAC_CEC=1", "-DPICODAC_BOARD_C2=1"],
+         ["tests/c2_arc_test.c", "cec_tv.c", "cec_wire.c", "board_status.c"]),
+        ("c2_controls", ["-I", str(root / "tests/sd_stubs"), "-DPICODAC_CEC=1", "-DPICODAC_BOARD_C2=1"],
+         ["tests/c2_controls_test.c", "sd_controls.c"]),
+        ("c2_ddc", ["-I", str(root / "tests/ddc_stubs"), "-DPICODAC_DDC=1", "-DPICODAC_BOARD_C2=1"],
+         ["tests/c2_ddc_test.c", "ddc_edid.c", "ddc_edid_data.c"]),
+        ("dual_queue", [], ["tests/dual_output_test.c", "spdif_encode.c"]),
         ("ddc", ["-I", str(root / "tests/ddc_stubs"), "-DPICODAC_DDC=1"],
          ["tests/ddc_test.c", "ddc_edid.c", "ddc_edid_data.c"]),
         ("cec", [], ["tests/cec_test.c", "cec_tv.c", "cec_wire.c"]),
@@ -55,7 +76,7 @@ def main():
     if os.name != "nt":
         flags += ["-pthread", "-D_POSIX_C_SOURCE=200809L"]
     sd_sources = ["tests/sd_player_test.c", "sd_eac3_player.c", "eac3_burst.c",
-                  "ac3_burst.c", "wav_reader.c", "sd_controls.c"]
+                  "ac3_burst.c", "wav_reader.c", "sd_controls.c", "board_status.c"]
     subprocess.run(common + flags + sd_sources + ["-o", str(binary)], cwd=root, check=True)
     for scenario in range(6):
         subprocess.run([str(binary), str(scenario)], cwd=root, check=True, timeout=15)
@@ -63,6 +84,10 @@ def main():
     subprocess.run(common + flags + ["-DPICODAC_CEC=1"] + sd_sources + ["-o", str(arc_binary)],
                    cwd=root, check=True)
     subprocess.run([str(arc_binary), "6"], cwd=root, check=True, timeout=15)
+    c2_binary = build / ("sd_c2.exe" if os.name == "nt" else "sd_c2")
+    subprocess.run(common + flags + ["-DPICODAC_CEC=1", "-DPICODAC_BOARD_C2=1"] + sd_sources + ["-o", str(c2_binary)],
+                   cwd=root, check=True)
+    subprocess.run([str(c2_binary), "6"], cwd=root, check=True, timeout=15)
 
 
 if __name__ == "__main__":

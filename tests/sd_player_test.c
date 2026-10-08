@@ -15,6 +15,7 @@
 #include "eac3_burst.h"
 #include "sd_eac3_player.h"
 #include "sd_controls.h"
+#include "board_status.h"
 #include "spdif.h"
 #include "spdif_encode.h"
 #include "ff.h"
@@ -32,12 +33,22 @@ static unsigned data_offset, played, trailing;
 static atomic_bool underrun_seen;
 static bool gpio_values[30];
 static uint32_t fake_time;
+#if PICODAC_BOARD_C2
+static unsigned boot_silence;
+static uint32_t boot_press_at;
+static bool boot_pressed, boot_playing;
+#endif
 uint32_t time_us_32(void){return fake_time+=1000;}
 void gpio_init(unsigned pin) {(void)pin;}
 void gpio_set_dir(unsigned pin,int out){(void)pin;(void)out;}
 void gpio_pull_up(unsigned pin){gpio_values[pin]=true;}
 void gpio_put(unsigned pin,int value){gpio_values[pin]=value;}
-int gpio_get(unsigned pin){return gpio_values[pin];}
+int gpio_get(unsigned pin){
+#if PICODAC_BOARD_C2
+  if (pin == 7 && boot_pressed && fake_time - boot_press_at < 60000) return 0;
+#endif
+  return gpio_values[pin];
+}
 #if PICODAC_CEC
 static bool arc_gate, arc_paused;
 static unsigned arc_wait = 5;
@@ -45,6 +56,13 @@ bool cec_arc_audio_allowed(void) { return arc_gate; }
 void cec_arc_set_enabled(bool enabled) {(void)enabled;}
 void cec_arc_request_playback(void) {}
 void cec_arc_volume_key(bool up, bool pressed) {(void)up;(void)pressed;}
+#if PICODAC_BOARD_C2
+bool cec_arc_port_audio_allowed(unsigned port) { assert(port < 2); return arc_gate; }
+void cec_arc_request_port_playback(unsigned port) { assert(port < 2); }
+void cec_arc_port_volume_key(unsigned port, bool up, bool pressed) {
+  assert(port < 2); (void)up; (void)pressed;
+}
+#endif
 void cec_arc_task(void) {
   if (!arc_gate && arc_wait && !--arc_wait) arc_gate = true;
 }
@@ -110,6 +128,10 @@ void spdif_init(unsigned pin, uint32_t rate, uint8_t depth, bool non_pcm) {
 }
 void spdif_start(void) { started = true; }
 void spdif_deinit(void) { started = false; }
+#if PICODAC_BOARD_C2
+void spdif_set_port_playing(unsigned port, bool on) { assert(port < 2); (void)on; }
+void spdif_set_burst_start(bool start) { assert(start == (data_offset == 0)); }
+#endif
 bool spdif_buffer_ready(void) {
   assert(started && !acquired);
 #if PICODAC_CEC
@@ -127,6 +149,19 @@ bool spdif_buffer_ready(void) {
 int32_t *spdif_write_buffer(void) { assert(acquired); return output; }
 void spdif_submit_buffer(void) {
   assert(acquired); acquired = false;
+#if PICODAC_BOARD_C2
+  if (!boot_playing) {
+    if (!sd_controls_playing()) {
+      for (unsigned i = 0; i < 384; ++i) assert(output[i] == 0);
+      assert(played == 0 && data_offset == 0);
+      if (++boot_silence == 4) {
+        boot_press_at = fake_time; boot_pressed = true;
+      }
+    } else {
+      assert(boot_silence >= 4); boot_playing = true;
+    }
+  }
+#endif
   if (!data_offset && (uint16_t)output[0] != 0xf872) {
     for (unsigned i = 0; i < 384; ++i) assert(output[i] == 0);
     if (sd_eac3_status == 1) atomic_store(&underrun_seen, true);
@@ -161,6 +196,7 @@ int main(int argc, char **argv) {
     memcpy(file_bytes + i, header, sizeof(header));
   }
   // No-stream failures exit via the sleep_ms(1000) idle hook.
+  board_status_init();
   if (!setjmp(finished)) sd_eac3_player_run();
 #ifdef _WIN32
   assert(WaitForSingleObject(core_thread, 5000) == WAIT_OBJECT_0);
@@ -177,6 +213,8 @@ int main(int argc, char **argv) {
     assert(!sd_controls_playing());
   }
   assert(sd_eac3_bursts_played == played);
+  assert(board_error_code == ((scenario >= 2 && scenario <= 4) ?
+                             BOARD_ERROR_TF_FILE : BOARD_ERROR_NONE));
   if (scenario == 5) assert(sd_eac3_underruns > 0);
 #if PICODAC_CEC
   assert(arc_paused && arc_gate);

@@ -1,5 +1,8 @@
 # 程序运行逻辑与外设配置
 
+`dev-zero-c2` 新增 `PICODAC_BOARD=c1/c2`。本文下面保留 C1 基线说明；
+C2 双 ARC、独立 CEC/DDC、共用 HPD 及五键逻辑见 [RP_ZERO_C2.md](RP_ZERO_C2.md)。
+
 更新日期：2026-09-20。范围：`dev-zero-c1` 分支、RP-ZERO-C1 / RP2040 当前工作区代码。
 本文描述实际实现；需求与实现尚不一致的部分见第 9 节。流程图需要支持 Mermaid 的 Markdown 预览器。
 
@@ -60,7 +63,8 @@ I2S 历史源码仍在仓库，但目标不编译 I2S/BOTH，固定
 | HDMI 5V Detect | 17，输入 | 高电平表示检测到 HDMI 5V，经外部电路转换电平 |
 | HDMI HPD | 18，低有效输出 | 初始化为高，任务中输出 `!hdmi_present` |
 | HDMI CEC | 19，开漏式收发 | 拉低或切为输入释放，无内部上拉 |
-| 状态 LED | 25，高有效，PIO1 | TF：ARC 未开启时亮 1 秒、灭 1 秒，开启时常亮；USB 保留音频状态显示 |
+| LED_Green | 25，高有效，GPIO | 正常常亮；错误按次数闪烁，见 LED_STATUS.md |
+| LED_Yellow（C1） | 15，高有效，GPIO | ARC 未建立时亮 1 秒、灭 1 秒，建立后常亮 |
 | B1 Key / LED+ / LED− | 10 / 9 / 11 | TF 播放/停止 |
 | B2 Key / LED+ / LED− | 13 / 12 / 14 | TF 下一首 |
 | B3 Key / LED+ / LED− | 21 / 20 / 22 | CEC 音量加 |
@@ -78,7 +82,7 @@ DMA 使用动态通道、32 位传输、PIO TX DREQ 和最高优先级的 DMA_IR
 ```mermaid
 flowchart TD
     BOOT[上电 / 复位] --> CLOCK[设置时钟]
-    CLOCK --> INIT[初始化 stdio、GPIO25 blink、DDC]
+    CLOCK --> INIT[初始化 stdio、板级状态灯、DDC]
     INIT --> CEC[初始化 CEC、5V 检测、HPD；关闭载波许可]
     CEC --> TIMER[启动 50 us CEC 位级定时回调]
     TIMER --> MODE{输入构建}
@@ -158,10 +162,11 @@ SPDIF 后发布 `switch_ack`；Core1 收到确认后才清空队列、打开下�
 
 ## 5. 四键、LED 与停止行为
 
-TF 版 GPIO25 绿色 LED 独立指示 ARC 链路：上电即以 2 秒周期慢闪（亮 1 秒、灭 1 秒）；
-CEC 握手完成、HDMI 5V 存在且链路许可有效后常亮。ARC 终止或 5V 检测失效后恢复慢闪。
-B1 停止、文件 EOF 或读卡错误本身不改变这个指示，只要 ARC 仍开启便常亮。
-CEC 关闭构建无法确认 ARC 状态，GPIO25 保持慢闪。
+ARC 状态统一使用黄色 LED：C1 GPIO15，C2 ARC1/ARC2 GPIO17/16。
+未建立链路时亮 1 秒、灭 1 秒；CEC 握手完成且 HDMI 5V 存在后常亮。
+GPIO25 绿色 LED 正常常亮；TF 读取或音频文件错误每轮亮灭各 4 次，
+轮间隔默认 2 秒且可配置。普通 EOF 和播放停止不报错。
+完整错误次数与配置见 [LED_STATUS.md](LED_STATUS.md)。
 
 实现：[sd_controls.c](sd_controls.c)。规则仅接入 TF 模式。
 按键输入上拉、低有效、20 ms 消抖；LED− 固定低，LED+ 高时点亮。

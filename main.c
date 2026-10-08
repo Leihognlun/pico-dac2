@@ -1,7 +1,11 @@
 #include <stdint.h>
+#include "board.h"
+#if PICODAC_BOARD_C2 && !PICODAC_INPUT_SD
+#include "sd_controls.h"
+#endif
 
 #include "audio_device.h"
-#include "blink.h"
+#include "board_status.h"
 #include "cec_arc.h"
 #include "ddc_edid.h"
 #include "hardware/clocks.h"
@@ -27,11 +31,7 @@ int main() {
 
   stdio_init_all();
 
-  blink_init(pio1, 25); // RP-ZERO-C1 green status LED, active high
-#if PICODAC_INPUT_SD
-  // ARC is not established at boot: one second on, one second off.
-  blink_set_period_us(2000000);
-#endif
+  board_status_init();
   ddc_edid_init();
   cec_arc_init();
 #if PICODAC_INPUT_SD
@@ -43,6 +43,9 @@ int main() {
 #ifdef HID_ENABLE
   usb_hid_init();
 #endif
+#if PICODAC_BOARD_C2
+  sd_controls_init();
+#endif
 
   LOG_INFO("Booted");
 
@@ -50,7 +53,14 @@ int main() {
     usb_device_task();
 
     audio_device_task();
+#if HID_ENABLE && !PICODAC_BOARD_C2
+    usb_hid_led_task(audio_device_stream_active());
+#endif
+#if PICODAC_BOARD_C2
+    sd_controls_task();
+#endif
     cec_arc_task();
+    board_status_task();
   }
 #endif
 }

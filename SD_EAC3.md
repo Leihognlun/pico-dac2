@@ -1,5 +1,8 @@
 # TF 卡 E-AC-3 → SPDIF 透传
 
+当前 C1/C2 board 构建及双 ARC 按键行为见 [RP_ZERO_C2.md](RP_ZERO_C2.md)。
+本文下方为历史测试记录，旧的 GPIO22/BOTH 构建参数不适用于当前 board 配置。
+
 `arc-tx-eac3` 分支新增 [CEC TV / ARC TX 测试版本](CEC_ARC.md)：GPIO8 输出音频、
 GPIO18 接 CEC，只有 ARC 握手成功后才播放。下方 GPIO22 / BOTH 的可用版本是
 **原无 CEC 基线**，归档保持不变；在新分支重建旧接线需显式设置

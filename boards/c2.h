@@ -1,0 +1,37 @@
+#pragma once
+// Standby B1/B2 LEDs: mode 0 = fixed brightness, 1 = breathing.
+// Period is one complete fade-in/fade-out cycle (500..5000 ms).
+#define BOARD_B1_IDLE_LED_MODE 1
+#define BOARD_B1_IDLE_LED_PERIOD_MS 3000
+#define BOARD_B1_IDLE_LED_BRIGHTNESS 50
+#define BOARD_B2_IDLE_LED_MODE 1
+#define BOARD_B2_IDLE_LED_PERIOD_MS 3000
+#define BOARD_B2_IDLE_LED_BRIGHTNESS 50
+#define BOARD_ARC_COUNT 2
+#define BOARD_BUTTON_COUNT 5
+#define BOARD_UART_TX 0
+#define BOARD_UART_RX 1
+#define BOARD_SD_SCK 2
+#define BOARD_SD_MOSI 3
+#define BOARD_SD_MISO 4
+#define BOARD_SD_CS 5
+#define BOARD_STATUS_LED 25
+#define BOARD_HPD 28
+#define BOARD_ARC1_TX 23
+#define BOARD_ARC1_CEC 24
+#define BOARD_ARC1_DETECT 29
+#define BOARD_ARC1_SDA 26
+#define BOARD_ARC1_SCL 27
+#define BOARD_ARC1_LED 17
+#define BOARD_ARC2_TX 18
+#define BOARD_ARC2_CEC 22
+#define BOARD_ARC2_DETECT 19
+#define BOARD_ARC2_SDA 20
+#define BOARD_ARC2_SCL 21
+#define BOARD_ARC2_LED 16
+#define BOARD_KEY_PINS {7, 9, 11, 13, 15}
+#define BOARD_LED_PINS {6, 8, 10, 12, 14}
+#define BOARD_CONTROL_PINS 6,7,8,9,10,11,12,13,14,15
+#define BOARD_NEXT_KEY 2
+#define BOARD_VOLUME_UP_KEY 3
+#define BOARD_VOLUME_DOWN_KEY 4

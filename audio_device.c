@@ -2,8 +2,10 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <assert.h>
+#include "hardware/pio.h"
 
-#include "blink.h"
+#include "board_status.h"
 #include "audio_output.h"
 #include "log.h"
 #include "ringbuffer.h"
@@ -107,7 +109,7 @@ void audio_device_init(void) {
   // Initialize the selected output backend.
   audio_output_init(&audio_output_config, false);
   // audio_output_start(&audio_output_config);
-  blink_set_period_us(1000000);
+  board_status_set_error(BOARD_ERROR_USB_UNDERRUN, false);
 }
 
 //--------------------------------------------------------------------+/
@@ -127,7 +129,7 @@ void audio_device_task(void) {
         audio_output_start(&audio_output_config);
         audio_output_unmute();
         g_current_state = STATE_PLAYING;
-        blink_led_on();
+        board_status_set_error(BOARD_ERROR_USB_UNDERRUN, false);
       }
       break;
 
@@ -136,7 +138,7 @@ void audio_device_task(void) {
       if (RECOVERY_WATER_LEVEL <= ringbuffer_fill_ratio(&rb)) {
         LOG_DEBUG("Buffer recovered. Resuming playback.");
         g_current_state = STATE_PLAYING;
-        blink_led_on();
+        board_status_set_error(BOARD_ERROR_USB_UNDERRUN, false);
       } else {
         // Keep feeding silence while stalled
         if (audio_output_is_buffer_ready()) {
@@ -168,7 +170,7 @@ void audio_device_task(void) {
           LOG_DEBUG("Underrun! Ratio: %.2f. Entering STALLED state.",
                     buffer_level);
           g_current_state = STATE_STALLED;
-          blink_set_period_us(250000);
+          board_status_set_error(BOARD_ERROR_USB_UNDERRUN, true);
           // Feed silence once to avoid noise
           memset(audio_output_buf, 0, audio_output_buf_size_frames * sizeof(int32_t) * 2);
         } else {
@@ -263,6 +265,7 @@ float audio_device_get_steady_buffer_fill_ratio() {
 }
 
 bool audio_device_is_playing() { return g_current_state == STATE_PLAYING; }
+bool audio_device_stream_active(void) { return g_current_state != STATE_STOPPED; }
 
 //--------------------------------------------------------------------+/
 // Audio Stream State Control
@@ -291,14 +294,14 @@ void audio_device_stream_start(uint8_t bit_depth, bool non_pcm) {
   // even when only the bit depth changes or playback restarts.
   ringbuffer_clear(&rb);
   g_current_state = STATE_BUFFERING;
-  blink_set_period_us(500000);
+  board_status_set_error(BOARD_ERROR_USB_UNDERRUN, false);
 }
 
 void audio_device_stream_stop(void) {
   LOG_DEBUG("Stopping stream");
   audio_output_stop(&audio_output_config);
   g_current_state = STATE_STOPPED;
-  blink_set_period_us(1000000);
+  board_status_set_error(BOARD_ERROR_USB_UNDERRUN, false);
 }
 
 //--------------------------------------------------------------------+/

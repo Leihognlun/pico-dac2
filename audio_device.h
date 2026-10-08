@@ -36,6 +36,7 @@ void audio_device_on_usb_rx(const int32_t *buffer, uint32_t num_samples);
 float audio_device_get_steady_buffer_fill_ratio();
 
 bool audio_device_is_playing();
+bool audio_device_stream_active(void);
 
 // --- Audio Stream State Control ---
 // non_pcm: 16-bit IEC 61937 carrier, bypassing all software gain/mute.

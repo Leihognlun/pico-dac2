@@ -86,8 +86,12 @@ void spdif_submit_buffer(void) {
   assert(status[1][2] == (non_pcm ? 0 : 0x20));
 }
 
-void blink_set_period_us(uint32_t us) { (void)us; }
-void blink_led_on(void) {}
+#include "board_status.h"
+static bool underrun_led;
+void board_status_set_error(board_error_t error, bool active) {
+  assert(error == BOARD_ERROR_USB_UNDERRUN);
+  underrun_led = active;
+}
 void usb_device_set_ep_out_handler(uint8_t ep, usb_ep_out_handler cb) {
   assert(ep == EP_AUDIO_STREAM_OUT); out_callback = cb;
 }

@@ -7,6 +7,7 @@
 
 #include "ac3_burst.h"
 #include "cec_arc.h"
+#include "board_status.h"
 #include "eac3_burst.h"
 #include "ff.h"
 #include "pico/multicore.h"
@@ -45,10 +46,12 @@ static unsigned track_count;
 static atomic_uint produced, consumed;
 static atomic_int producer_result;
 static atomic_bool stream_ready, stream_switching;
+static atomic_bool stop_after_track;
 #if PICODAC_SD_BENCHMARK
 static atomic_bool benchmark_running;
 #endif
 static atomic_uint stream_generation, switch_sequence, switch_ack_sequence;
+static atomic_uint drained_generation;
 
 // Published by Core1 before stream_generation/stream_ready release stores.
 static uint32_t stream_rate, stream_words;
@@ -252,6 +255,8 @@ static void producer(void) {
 
   unsigned track = 0;
   unsigned command = sd_controls_next_generation();
+  unsigned start_command = sd_controls_start_generation();
+  unsigned completed_tracks = 0;
   bool first_track = true;
 
   for (;;) {
@@ -331,10 +336,25 @@ static void producer(void) {
     bool ready_published = false;
     for (;;) {
       if (sd_controls_next_generation() != command) break;
+      if (sd_controls_start_generation() != start_command) {
+        // C2 pre-buffers track zero while initially in standby.  Its first
+        // play press starts that already prepared stream; later starts select
+        // either track zero or the quick-resume successor below.
+        if (!start_command && !sd_controls_start_from_next())
+          start_command = sd_controls_start_generation();
+        else
+          goto switch_track;
+      }
       sd_diag_phase(SD_DIAG_WAIT);
       while (write - atomic_load_explicit(&consumed, memory_order_acquire) ==
              queue_slots) {
         if (sd_controls_next_generation() != command) goto switch_track;
+        if (sd_controls_start_generation() != start_command) {
+          if (!start_command && !sd_controls_start_from_next())
+            start_command = sd_controls_start_generation();
+          else
+            goto switch_track;
+        }
         sleep_us(100);
       }
 
@@ -362,12 +382,18 @@ static void producer(void) {
 
 switch_track:
     f_close(&file);
+    if (sd_controls_start_generation() != start_command)
+      goto playback_restarted;
     if (sd_controls_next_generation() != command) {
       track = advance_track(track, &command);
+      completed_tracks = 0;
       continue;
     }
 
     int final_result = result == 0 ? 2 : result;
+    atomic_store_explicit(&stop_after_track,
+                          final_result == 2 && completed_tracks + 1 >= 2,
+                          memory_order_relaxed);
     if (!ready_published) {
       publish_track_state(write != 0, final_result);
       ready_published = write != 0;
@@ -384,12 +410,39 @@ wait_next: {
     f_mount(NULL, "0:", 0);
     return;
 #endif
+    if (final_result == 2) {
+      unsigned drained = atomic_load_explicit(&drained_generation,
+                                              memory_order_acquire);
+      while (atomic_load_explicit(&drained_generation, memory_order_acquire) ==
+             drained) {
+        if (sd_controls_next_generation() != command) goto next_pressed;
+        if (sd_controls_start_generation() != start_command)
+          goto playback_restarted;
+        sleep_ms(1);
+      }
+      ++completed_tracks;
+      if (completed_tracks < 2 && sd_controls_playing()) {
+        track = (track + 1) % track_count;
+        continue;
+      }
+    }
+
     unsigned wait_play = sd_controls_play_generation();
     while (sd_controls_next_generation() == command &&
-           sd_controls_play_generation() == wait_play)
+           sd_controls_play_generation() == wait_play &&
+           sd_controls_start_generation() == start_command)
       sleep_ms(1);
-    if (sd_controls_next_generation() != command)
+    if (sd_controls_next_generation() != command) {
+next_pressed:
       track = advance_track(track, &command);
+      completed_tracks = 0;
+      continue;
+    }
+playback_restarted:
+    start_command = sd_controls_start_generation();
+    track = sd_controls_start_from_next() ? (track + 1) % track_count : 0;
+    command = sd_controls_next_generation();
+    completed_tracks = 0;
   }
   }
 }
@@ -397,6 +450,9 @@ wait_next: {
 static void diagnostics(void) {
   sd_controls_task();
   cec_arc_task();
+  board_status_set_error(BOARD_ERROR_TF_FILE,
+      atomic_load_explicit(&producer_result, memory_order_acquire) < 0);
+  board_status_task();
 #if PICODAC_SD_BENCHMARK
   if (atomic_load_explicit(&benchmark_running, memory_order_acquire)) return;
 #endif
@@ -491,7 +547,17 @@ void sd_eac3_player_run(void) {
               atomic_load_explicit(&produced, memory_order_acquire);
           if (!have_unit) {
             sd_eac3_status = result;
-            if (result == 2) sd_controls_stop();
+            if (result == 2) {
+#ifdef PICODAC_TEST_EXIT_ON_EOF
+              sd_controls_stop();
+#else
+              if (atomic_load_explicit(&stop_after_track,
+                                       memory_order_acquire))
+                sd_controls_stop();
+              atomic_fetch_add_explicit(&drained_generation, 1,
+                                        memory_order_release);
+#endif
+            }
             reported = true;
           }
         }
@@ -500,6 +566,9 @@ void sd_eac3_player_run(void) {
 
     int32_t *out = spdif_write_buffer();
     bool playing = sd_controls_playing();
+#if PICODAC_BOARD_C2
+    playing = playing && sd_controls_audio_allowed();
+#endif
     for (unsigned i = 0; i < SPDIF_BLOCK_FRAMES * 2; ++i) {
       if (!have_unit || !playing) {
         out[i] = 0;
@@ -510,6 +579,9 @@ void sd_eac3_player_run(void) {
         out[i] = audio_storage.pcm[read % PCM_SLOTS][i];
       }
     }
+#if PICODAC_BOARD_C2
+    spdif_set_burst_start(!stream_non_pcm || offset == 0);
+#endif
     spdif_submit_buffer();
     sd_diag_submit_end();
 

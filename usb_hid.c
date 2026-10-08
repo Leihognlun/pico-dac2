@@ -11,17 +11,45 @@
 #include "log.h"
 #include "usb.h"
 #include "usb_config.h"
+#include "board.h"
+#include "button_led.h"
+#if PICODAC_BOARD_C2
+#include "sd_controls.h"
+#endif
 
-static const uint8_t button_pins[] = {10, 13, 21};
-static const uint8_t led_pins[] = {9, 12, 20};
-static const uint8_t led_pins_n[] = {11, 14, 22};
+#if !PICODAC_BOARD_C2
+static const uint8_t button_pins[] = BOARD_KEY_PINS;
+static const uint8_t led_pins[] = BOARD_LED_PINS;
+static const uint8_t led_pins_n[] = BOARD_LED_N_PINS;
+#endif
 static uint8_t raw_buttons, stable_buttons, sent_buttons, led_mask;
 static uint32_t changed_at[3];
 static uint8_t idle_rate[4];
 static uint32_t media_sent_at;
 static uint32_t led_commands;
+#if !PICODAC_BOARD_C2
+static bool led_idle;
+static uint32_t led_idle_started;
+#endif
+
+void usb_hid_led_task(bool playing) {
+#if !PICODAC_BOARD_C2
+  uint32_t now = time_us_32();
+  if (!playing && !led_idle) led_idle_started = now;
+  led_idle = !playing;
+  for (unsigned i = 0; i < BOARD_ARC_COUNT; ++i)
+    button_led_write(led_pins[i], led_idle ?
+      button_led_idle_level(i, now - led_idle_started) :
+      ((led_mask & (1u << i)) ? 10000 : 0));
+#else
+  (void)playing;
+#endif
+}
 
 static void sample_buttons(void) {
+#if PICODAC_BOARD_C2
+  stable_buttons = sd_controls_next_pressed() ? 1u : 0u;
+#else
   // In ARC builds these physical keys control the Soundbar, not the USB host.
 #if PICODAC_CEC
   stable_buttons = 0; return;
@@ -37,19 +65,28 @@ static void sample_buttons(void) {
     if ((uint32_t)(now - changed_at[i]) >= 20000)
       stable_buttons = (stable_buttons & ~bit) | (raw_buttons & bit);
   }
+#endif
 }
 
 static bool set_led_report(const uint8_t *buf, uint16_t len) {
+#if PICODAC_BOARD_C2
+  // C2 LEDs reflect local port playback; do not acknowledge an unapplied write.
+  (void)buf; (void)len;
+  return false;
+#else
   if (!buf || len != HID_OUT_PACKET_SIZE || buf[0] != HID_REPORT_LEDS ||
       (buf[1] & 0xF8)) return false;
   led_mask = buf[1];
 #if PICODAC_CEC
   led_mask &= 7u;
 #endif
-  for (unsigned i = 0; i < 3; ++i)
-    gpio_put(led_pins[i], !!(led_mask & (1u << i)));
+  for (unsigned i = 0; i < 3; ++i) {
+    if (i < BOARD_ARC_COUNT && led_idle) continue;
+    button_led_write(led_pins[i], (led_mask & (1u << i)) ? 10000 : 0);
+  }
   ++led_commands;
   return true;
+#endif
 }
 
 static void send_diagnostics(void) {
@@ -180,6 +217,7 @@ static bool control_in(const struct usb_setup_packet_t *pkt) {
 }
 
 void usb_hid_init() {
+#if !PICODAC_BOARD_C2
   for (unsigned i = 0; i < 3; ++i) {
     gpio_init(button_pins[i]);
     gpio_set_dir(button_pins[i], GPIO_IN);
@@ -195,6 +233,7 @@ void usb_hid_init() {
     gpio_put(led_pins_n[i], false);
     gpio_set_dir(led_pins_n[i], GPIO_OUT);
   }
+#endif
   usb_device_set_control_in_handler(INTERFACE_HID, control_in);
   usb_device_set_ep_out_handler(EP_HID_OUT, ep_hid_out_handler);
   usb_device_set_ep_in_handler(EP_HID_IN & 0x7F, ep_hid_in_handler);

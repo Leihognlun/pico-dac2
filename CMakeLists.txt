@@ -17,95 +17,58 @@ endif()
 if(NOT PICODAC_INPUT MATCHES "^(USB|SD_AUDIO)$")
     message(FATAL_ERROR "PICODAC_INPUT must be USB or SD_AUDIO")
 endif()
-set(PICODAC_SD_SCK_PIN 2 CACHE STRING "TF SPI0 SCLK GPIO")
-set(PICODAC_SD_MOSI_PIN 3 CACHE STRING "TF SPI0 TX/MOSI GPIO")
-set(PICODAC_SD_MISO_PIN 4 CACHE STRING "TF SPI0 RX/MISO GPIO")
-set(PICODAC_SD_CS_PIN 5 CACHE STRING "TF SPI0 CS GPIO")
+include(boards/select.cmake)
 set(PICODAC_SD_SPI_HZ 24000000 CACHE STRING "TF SPI transfer clock")
 set(PICODAC_SD_FILE "0:/TRACK.WAV" CACHE STRING "WAV, AC3, or E-AC-3 file on TF")
 option(PICODAC_SD_DIAGNOSTICS "Nonblocking UART0 SD playback diagnostics" ON)
 option(PICODAC_SD_UART_LOG "Enable UART log output in SD mode" ON)
 option(PICODAC_SD_BENCHMARK "Benchmark read-only TF/SPI throughput before playback" OFF)
+set(PICODAC_ERROR_LED_GAP_MS 2000 CACHE STRING "Dark interval between error LED rounds (ms)")
+set(PICODAC_ERROR_LED_STEP_MS 250 CACHE STRING "Duration of each error LED ON/OFF phase (ms)")
+foreach(timing PICODAC_ERROR_LED_GAP_MS PICODAC_ERROR_LED_STEP_MS)
+    if(NOT "${${timing}}" MATCHES "^[0-9]+$" OR
+       ${timing} LESS 1 OR ${timing} GREATER 60000)
+        message(FATAL_ERROR "${timing} must be 1..60000 ms")
+    endif()
+endforeach()
 
 # user configurations
 option(PICODAC_CEC "TV CEC / ARC control" ON)
-option(PICODAC_DDC "Read-only EDID on I2C1 SDA=GP6 SCL=GP7" ${PICODAC_CEC})
-set(PICODAC_CEC_PIN 19)
+option(PICODAC_DDC "Read-only EDID on each board DDC bus" ${PICODAC_CEC})
 set(PICODAC_OUTPUT "SPDIF")
-set(PICODAC_SPDIF_PIN 16)
 if(NOT PICODAC_SPDIF_PIN MATCHES "^[0-9]+$" OR PICODAC_SPDIF_PIN GREATER 29)
     message(FATAL_ERROR "PICODAC_SPDIF_PIN must be an RP2040 GPIO number (0..29)")
 endif()
 set (PICODAC_VENDOR_ID 0xcafe CACHE STRING "USB Vendor ID")
 set (PICODAC_PRODUCT_ID 0xbabe CACHE STRING "USB Product ID")
 
-# Media buttons and host-controlled LEDs reserve these GPIOs.
-foreach(control_pin 9 10 11 12 13 14 20 21 22 26 27 28)
-    if(PICODAC_SPDIF_PIN EQUAL control_pin)
-        message(FATAL_ERROR "Audio GPIO ${control_pin} conflicts with media buttons/LEDs")
+# Check all board-owned pins, counting shared HPD only once.
+set(board_pins ${BOARD_UART_TX} ${BOARD_UART_RX} ${BOARD_STATUS_LED}
+    ${BOARD_HPD} ${BOARD_CONTROL_PINS} ${BOARD_SD_SCK} ${BOARD_SD_MOSI}
+    ${BOARD_SD_MISO} ${BOARD_SD_CS})
+foreach(port RANGE 1 ${BOARD_ARC_COUNT})
+    foreach(signal TX CEC DETECT SDA SCL LED)
+        list(APPEND board_pins ${BOARD_ARC${port}_${signal}})
+    endforeach()
+endforeach()
+set(unique_pins ${board_pins})
+list(REMOVE_DUPLICATES unique_pins)
+list(LENGTH board_pins pin_count)
+list(LENGTH unique_pins unique_count)
+if(NOT pin_count EQUAL unique_count)
+    message(FATAL_ERROR "Conflicting GPIO assignments in board ${PICODAC_BOARD}")
+endif()
+foreach(pin IN LISTS board_pins)
+    if(NOT pin MATCHES "^[0-9]+$" OR pin GREATER 29)
+        message(FATAL_ERROR "Invalid RP2040 GPIO ${pin}")
     endif()
 endforeach()
-
-if(PICODAC_INPUT STREQUAL "SD_AUDIO")
-    if(NOT PICODAC_SD_SCK_PIN MATCHES "^(2|6|18|22)$" OR
-       NOT PICODAC_SD_MOSI_PIN MATCHES "^(3|7|19)$" OR
-       NOT PICODAC_SD_MISO_PIN MATCHES "^(4|16|20)$" OR
-       NOT PICODAC_SD_CS_PIN MATCHES "^([0-9]|1[0-9]|2[0-2]|2[6-8])$")
-        message(FATAL_ERROR "TF requires exposed Pico hardware SPI0 pins (UART GPIO0/1 reserved)")
-    endif()
-    set(sd_pins ${PICODAC_SD_SCK_PIN} ${PICODAC_SD_MOSI_PIN}
-                ${PICODAC_SD_MISO_PIN} ${PICODAC_SD_CS_PIN})
-    list(REMOVE_DUPLICATES sd_pins)
-    list(LENGTH sd_pins sd_pin_count)
-    if(NOT sd_pin_count EQUAL 4)
-        message(FATAL_ERROR "TF requires four distinct pins")
-    endif()
-    foreach(sd_pin IN LISTS sd_pins)
-        if(sd_pin EQUAL 0 OR sd_pin EQUAL 1 OR sd_pin EQUAL PICODAC_SPDIF_PIN OR
-           sd_pin MATCHES "^(9|10|11|12|13|14|20|21|22|26|27|28)$")
-            message(FATAL_ERROR "TF GPIO ${sd_pin} conflicts with audio/UART/control pins")
-        endif()
-    endforeach()
-    if(NOT PICODAC_SD_SPI_HZ MATCHES "^[0-9]+$" OR
-       PICODAC_SD_SPI_HZ LESS 100000 OR PICODAC_SD_SPI_HZ GREATER 25000000)
-        message(FATAL_ERROR "TF SPI clock must be 100000..25000000 Hz")
-    endif()
-    if(NOT PICODAC_SD_FILE MATCHES "^0:/[A-Za-z0-9_./-]+$")
-        message(FATAL_ERROR "TF file must be an ASCII 0:/ path without spaces or quotes")
-    endif()
+if(NOT PICODAC_SD_SPI_HZ MATCHES "^[0-9]+$" OR
+   PICODAC_SD_SPI_HZ LESS 100000 OR PICODAC_SD_SPI_HZ GREATER 25000000)
+    message(FATAL_ERROR "TF SPI clock must be 100000..25000000 Hz")
 endif()
-
-
-
-
-
-if(PICODAC_CEC)
-    if(NOT PICODAC_OUTPUT STREQUAL "SPDIF")
-        message(FATAL_ERROR "CEC/ARC build requires SPDIF-only output (GP18 reserved for CEC)")
-    endif()
-    if(NOT PICODAC_CEC_PIN MATCHES "^([2-8]|1[5-9]|2[0-2])$" OR
-       PICODAC_CEC_PIN EQUAL PICODAC_SPDIF_PIN)
-        message(FATAL_ERROR "CEC GPIO conflicts with audio/UART/buttons/LEDs or is not exposed")
-    endif()
-    if(PICODAC_INPUT STREQUAL "SD_AUDIO")
-        foreach(sd_pin IN LISTS sd_pins)
-            if(PICODAC_CEC_PIN EQUAL sd_pin)
-                message(FATAL_ERROR "CEC GPIO conflicts with TF SPI")
-            endif()
-        endforeach()
-    endif()
-endif()
-
-if(PICODAC_DDC)
-    foreach(ddc_pin 6 7)
-        if((PICODAC_CEC AND PICODAC_CEC_PIN EQUAL ddc_pin) OR
-           PICODAC_SPDIF_PIN EQUAL ddc_pin)
-            message(FATAL_ERROR "DDC GPIO ${ddc_pin} conflicts with CEC/audio")
-        endif()
-        if(PICODAC_INPUT STREQUAL "SD_AUDIO" AND ddc_pin IN_LIST sd_pins)
-            message(FATAL_ERROR "DDC GPIO ${ddc_pin} conflicts with TF SPI")
-        endif()
-    endforeach()
+if(NOT PICODAC_SD_FILE MATCHES "^0:/[A-Za-z0-9_./-]+$")
+    message(FATAL_ERROR "TF file must be an ASCII 0:/ path without spaces or quotes")
 endif()
 
 if(BOARD_NAME STREQUAL "rp2040")
@@ -138,8 +101,19 @@ endif()
 
     add_executable(mdac_adc2
         main.c
-        blink.c
+        board_status.c
+        board_panic.c
     )
+    target_compile_definitions(mdac_adc2 PRIVATE
+        PICODAC_ERROR_LED_GAP_MS=${PICODAC_ERROR_LED_GAP_MS}
+        PICODAC_ERROR_LED_STEP_MS=${PICODAC_ERROR_LED_STEP_MS}
+        PICO_PANIC_FUNCTION=board_panic PICO_PANIC_FUNCTION_DOES_NOT_RETURN=1
+        PICODAC_BOARD_C2=$<STREQUAL:${PICODAC_BOARD},c2>
+        PICO_DEFAULT_UART=0 PICO_DEFAULT_UART_TX_PIN=${BOARD_UART_TX}
+        PICO_DEFAULT_UART_RX_PIN=${BOARD_UART_RX})
+    if(PICODAC_BOARD STREQUAL "c2")
+        target_sources(mdac_adc2 PRIVATE sd_controls.c)
+    endif()
     target_compile_definitions(mdac_adc2 PRIVATE PICODAC_CEC=$<BOOL:${PICODAC_CEC}>)
     target_compile_definitions(mdac_adc2 PRIVATE PICODAC_DDC=$<BOOL:${PICODAC_DDC}>)
     if(PICODAC_DDC)
@@ -157,14 +131,16 @@ endif()
             GIT_TAG 417fca7fa519a915a7a697e3edf7b9a183243eaa
         )
         FetchContent_MakeAvailable(pico_fatfs)
-        target_sources(mdac_adc2 PRIVATE eac3_burst.c ac3_burst.c wav_reader.c sd_controls.c sd_eac3_player.c)
+        target_sources(mdac_adc2 PRIVATE eac3_burst.c ac3_burst.c wav_reader.c sd_eac3_player.c)
+        if(NOT PICODAC_BOARD STREQUAL "c2")
+            target_sources(mdac_adc2 PRIVATE sd_controls.c)
+        endif()
         if(PICODAC_SD_DIAGNOSTICS)
             target_sources(mdac_adc2 PRIVATE sd_diagnostics.c)
             target_link_libraries(mdac_adc2 hardware_uart)
             target_compile_definitions(mdac_adc2 PRIVATE PICODAC_SD_DIAGNOSTICS=1
                 PICODAC_SD_UART_LOG=$<BOOL:${PICODAC_SD_UART_LOG}>
-                PICO_DEFAULT_UART=0 PICO_DEFAULT_UART_TX_PIN=0
-                PICO_DEFAULT_UART_RX_PIN=1 PICO_DEFAULT_UART_BAUD_RATE=115200)
+                PICO_DEFAULT_UART_BAUD_RATE=115200)
         endif()
         target_link_libraries(mdac_adc2 pico_fatfs pico_multicore)
         target_compile_definitions(mdac_adc2 PRIVATE
@@ -182,12 +158,18 @@ endif()
         target_sources(mdac_adc2 PRIVATE audio_device.c ringbuffer.c usb.c usb_audio.c usb_hid.c)
         target_compile_definitions(mdac_adc2 PRIVATE PICODAC_INPUT_SD=0)
     endif()
-    target_sources(mdac_adc2 PRIVATE spdif.c spdif_encode.c)
+    if(PICODAC_BOARD STREQUAL "c2")
+        target_sources(mdac_adc2 PRIVATE spdif_dual.c)
+    else()
+        target_sources(mdac_adc2 PRIVATE spdif.c)
+    endif()
+    target_sources(mdac_adc2 PRIVATE spdif_encode.c)
     target_compile_definitions(mdac_adc2 PRIVATE PICODAC_OUTPUT_SPDIF=1 PICODAC_OUTPUT_BOTH=0)
     pico_generate_pio_header(mdac_adc2 ${CMAKE_CURRENT_LIST_DIR}/spdif.pio)
     # Add the standard library to the build
     target_link_libraries(mdac_adc2
         hardware_dma
+        hardware_pwm
         hardware_pio
         pico_stdlib
     )
@@ -205,7 +187,6 @@ endif()
         ${CMAKE_CURRENT_LIST_DIR}
     )
 
-    pico_generate_pio_header(mdac_adc2 ${CMAKE_CURRENT_LIST_DIR}/blink.pio)
 
     pico_set_program_name(mdac_adc2 "mdac_adc2")
     pico_set_program_version(mdac_adc2 "0.1")

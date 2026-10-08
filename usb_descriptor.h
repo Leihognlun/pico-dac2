@@ -2,6 +2,7 @@
 
 #include "usb_common.h"
 #include "usb_config.h"
+#include "board.h"
 // TODO set string descriptor index
 
 // HID
@@ -41,7 +42,11 @@ static const uint8_t report_descriptor[] = {
     0xA1, 0x01,
     0x85, HID_REPORT_MEDIA,
     0x15, 0x00, 0x25, 0x01,
+#if PICODAC_BOARD_C2
+    0x09, 0xB5,        // Scan Next Track (B3)
+#else
     0x09, 0xCD,        // Play/Pause
+#endif
     0x09, 0xE9,        // Volume Increment
     0x09, 0xEA,        // Volume Decrement
     0x75, 0x01, 0x95, 0x03, 0x81, 0x02,
@@ -60,7 +65,11 @@ static const struct usb_device_descriptor device_descriptor = {
     .bMaxPacketSize0 = 64,    // Max packet size for ep0
     .idVendor = VENDOR_ID,    // Your vendor id
     .idProduct = PRODUCT_ID,  // Your product ID
-    .bcdDevice = 0x010a,      // 1.10: shared clock, AC3/DTS 192 kHz carriers
+#if PICODAC_BOARD_C2
+    .bcdDevice = 0x010b,      // C2: dual ARC and local controls / Next Track HID
+#else
+    .bcdDevice = 0x010a,
+#endif
     .iManufacturer = 0,       // Manufacturer string index
     .iProduct = 0,            // Product string index
     .iSerialNumber = 0,       // No serial number

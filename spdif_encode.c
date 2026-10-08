@@ -27,8 +27,9 @@ static uint8_t frequency_code(uint32_t rate) {
   }
 }
 
-void spdif_encode_block(uint32_t *out, const int32_t *pcm,
-                        uint8_t bit_depth, uint32_t sample_rate, bool non_pcm) {
+static void encode_block(uint32_t *out, const int32_t *pcm,
+                         uint8_t bit_depth, uint32_t sample_rate, bool non_pcm,
+                         bool invalid) {
   assert(bit_depth == 16 || bit_depth == 24 || bit_depth == 32);
   assert(!non_pcm || bit_depth == 16);
   // Consumer, copying permitted, general category. Channel-status bit 1
@@ -53,7 +54,7 @@ void spdif_encode_block(uint32_t *out, const int32_t *pcm,
       // IEC 60958 slots 4..27: audio/data, then V, U=0, C, P.
       // V=1 in non-PCM mode: these words are unsuitable for PCM D/A.
       uint32_t payload = ((sample & 0xffffffu) << 4) |
-                         ((uint32_t)non_pcm << 28) | (c << 30);
+                         ((uint32_t)invalid << 28) | (c << 30);
       uint32_t parity = payload;
       parity ^= parity >> 16;
       parity ^= parity >> 8;
@@ -70,4 +71,14 @@ void spdif_encode_block(uint32_t *out, const int32_t *pcm,
                ((uint32_t)bmc[payload >> 24] << 16);
     }
   }
+}
+
+void spdif_encode_block(uint32_t *out, const int32_t *pcm,
+                        uint8_t bit_depth, uint32_t sample_rate, bool non_pcm) {
+  encode_block(out, pcm, bit_depth, sample_rate, non_pcm, non_pcm);
+}
+
+void spdif_encode_idle_block(uint32_t *out, uint8_t bit_depth,
+                             uint32_t sample_rate, bool non_pcm) {
+  encode_block(out, NULL, bit_depth, sample_rate, non_pcm, true);
 }

@@ -12,3 +12,6 @@
 void spdif_encode_init(void);
 void spdif_encode_block(uint32_t *out, const int32_t *pcm,
                         uint8_t bit_depth, uint32_t sample_rate, bool non_pcm);
+// Zero payload with V=1, preserving the current carrier channel status.
+void spdif_encode_idle_block(uint32_t *out, uint8_t bit_depth,
+                             uint32_t sample_rate, bool non_pcm);

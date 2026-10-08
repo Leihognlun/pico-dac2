@@ -5,6 +5,11 @@
 #include "usb.h"
 #include "usb_hid.h"
 #include "usb_config.h"
+#include "board.h"
+#if PICODAC_BOARD_C2
+static bool c2_next;
+bool sd_controls_next_pressed(void) { return c2_next; }
+#endif
 
 volatile uint32_t audio_underrun_count = 1, audio_dropped_frames = 0x12345678;
 volatile uint32_t usb_audio_bad_packets = 6, usb_audio_rx_packets = 7;
@@ -68,6 +73,22 @@ static void check(unsigned page, uint32_t a, uint32_t b, uint32_t c) {
 }
 int main(void) {
   usb_hid_init();
+#if PICODAC_BOARD_C2
+  for (unsigned i = 0; i < 30; ++i) assert(!initialized[i]);
+  assert(select_interface(0));
+  assert(last[0] == HID_REPORT_MEDIA && last[1] == 0);
+  next_report(); check(0, 1, 0x12345678, 3);
+  c2_next = true; next_report();
+  assert(last_len == 2 && last[0] == HID_REPORT_MEDIA && last[1] == 1);
+  c2_next = false; next_report();
+  assert(last_len == 2 && last[0] == HID_REPORT_MEDIA && last[1] == 0);
+  uint8_t leds[] = {3, 7};
+  struct usb_setup_packet_t pkt = {0x21, 9, 0x0203, INTERFACE_HID, 2};
+  assert(!control_out(&pkt, leds, 2));
+  led_out(leds, 2);
+  for (unsigned i = 0; i < 30; ++i) assert(!initialized[i] && !pins[i]);
+  puts("PASS: C2 HID next press/release, diagnostics, local LED ownership");
+#else
   assert(pins[10] && pins[13] && pins[21]);
   assert(!outputs[10] && !outputs[13] && !outputs[21]);
   assert(outputs[9] && outputs[12] && outputs[20]);
@@ -130,4 +151,5 @@ int main(void) {
   }
   puts("PASS: media debounce/press/release, three LED GPIOs, OUT/SET_REPORT/GET_REPORT/idle");
   puts("PASS: HID diagnostic pages, live counters and little-endian transport");
+#endif
 }

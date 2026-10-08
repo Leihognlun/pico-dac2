@@ -19,7 +19,7 @@ int main(void) {
       case 0x08:
         usage = value;
         if (page == 0x0C && id == HID_REPORT_MEDIA) {
-          if (usage == 0xCD) media_usages |= 1;
+          if (usage == (PICODAC_BOARD_C2 ? 0xB5 : 0xCD)) media_usages |= 1;
           if (usage == 0xE9) media_usages |= 2;
           if (usage == 0xEA) media_usages |= 4;
         }
@@ -89,6 +89,6 @@ int main(void) {
   assert(clocks == 1);
   assert(configuration_descriptor.ac.cs_ac_input_terminal.bCSourceID == AUDIO_CONTROL_ID_CLOCK);
   assert(configuration_descriptor.ac.cs_ac_output_terminal.bCSourceID == AUDIO_CONTROL_ID_CLOCK);
-  assert(device_descriptor.bcdDevice == 0x010a);
+  assert(device_descriptor.bcdDevice == (PICODAC_BOARD_C2 ? 0x010b : 0x010a));
   puts("PASS: USB descriptor lengths, topology, formats and endpoints");
 }

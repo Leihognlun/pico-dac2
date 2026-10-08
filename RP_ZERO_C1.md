@@ -1,6 +1,9 @@
 # RP-ZERO-C1 firmware configuration
 
-This branch targets the RP-ZERO-C1 board and has one audio output only:
+Select `-DPICODAC_BOARD=c1` (the default). GPIO definitions live in `boards/c1.h`.
+For the C2 dual-ARC board and five-button mapping, see [RP_ZERO_C2.md](RP_ZERO_C2.md).
+
+The C1 configuration has one audio output only:
 SPDIF on GPIO16, converted by the board circuit to HDMI ARC TX. I2S and the
 dual-output build mode are not part of this target.
 
@@ -13,7 +16,8 @@ dual-output build mode are not part of this target.
 | DDC SDA / SCL | 6 / 7 |
 | SPDIF (ARC TX) | 16 |
 | HDMI 5V detect / HPD (active low) / CEC | 17 / 18 / 19 |
-| Green status LED | 25 |
+| Green code/error LED | 25 |
+| Yellow ARC status LED | 15 |
 | B1 key / LED+ / LED- | 10 / 9 / 11 |
 | B2 key / LED+ / LED- | 13 / 12 / 14 |
 | B3 key / LED+ / LED- | 21 / 20 / 22 |
@@ -25,6 +29,7 @@ Select the TF player and set the fixed boot file with CMake:
 
 ```powershell
 cmake -S . -B build/zero-c1-sd -G Ninja `
+  -DPICODAC_BOARD=c1 `
   -DPICODAC_INPUT=SD_AUDIO `
   -DPICODAC_SD_FILE="0:/TRACK.WAV"
 cmake --build build/zero-c1-sd
@@ -47,10 +52,13 @@ files. Their FAT directory order is the playback/next-track order;
 
 ## Buttons and LEDs
 
-In TF mode, the green status LED on GPIO25 blinks one second on / one second
-off while ARC is not enabled, and stays on when the CEC ARC link is enabled
-and HDMI 5V is detected. B1 stop/play does not change this indicator. With CEC
-disabled, ARC cannot be confirmed and the LED continues blinking.
+The yellow ARC LED on GPIO15 blinks one second on / one second off while ARC
+is not enabled, and stays on when its CEC ARC link is enabled and HDMI 5V is
+detected. B1 stop/play does not change this indicator. With CEC disabled,
+ARC cannot be confirmed and the yellow LED continues blinking.
+The green LED on GPIO25 is normally on; errors produce counted ON/OFF patterns.
+TF/file errors use four ON/OFF pairs (8 states), with a configurable 2-second
+gap between rounds. See [LED_STATUS.md](LED_STATUS.md) for all error codes.
 
 - B1 toggles play/stop. Its LED is always on.
 - B2 selects the next root-directory track while playing.
