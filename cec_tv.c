@@ -18,7 +18,9 @@ void cec_tv_init(cec_tv_t *t, cec_send_fn fn, void *ctx, uint32_t now) {
 }
 void cec_tv_request_arc(cec_tv_t *t, bool on, uint32_t now) {
   t->desired = on; t->retry_at = now;
-  if (!on) { t->arc = CEC_ARC_STOPPING; t->deadline = now + 4000000; }
+  if (!on && t->arc != CEC_ARC_OFF) {
+    t->arc = CEC_ARC_STOPPING; t->deadline = now + 4000000;
+  }
   else if (t->arc == CEC_ARC_STOPPING) t->arc = CEC_ARC_OFF;
 }
 void cec_tv_request_playback(cec_tv_t *t, uint32_t now) {
@@ -31,6 +33,10 @@ void cec_tv_request_playback(cec_tv_t *t, uint32_t now) {
   }
   t->retry_at = now;
   if (t->arc == CEC_ARC_STOPPING) t->arc = CEC_ARC_OFF;
+}
+bool cec_tv_request_audio_status(cec_tv_t *t) {
+  return t->registered && t->soundbar_present &&
+         send(t, 5, 0x71, NULL, 0, 0); // Give Audio Status
 }
 void cec_tv_task(cec_tv_t *t, uint32_t now) {
   if (t->conflict) return;
@@ -132,6 +138,10 @@ void cec_tv_receive(cec_tv_t *t, const cec_frame_t *f, uint32_t now) {
         t->deadline = now + 4000000;
       }
     } else if (op == 0xc5) {
+      // Once ARC is already off there is no termination handshake left to
+      // acknowledge.  This also suppresses redundant C2 replies after a
+      // broadcast System Audio Mode Off (5F:72:00).
+      if (t->arc == CEC_ARC_OFF) { t->desired = false; return; }
       t->arc = CEC_ARC_STOPPING; t->desired = false; t->deadline = now + 4000000;
       send(t, 5, 0xc2, NULL, 0, CEC_TAG_DISABLE);
     } else abort_msg(t, src, op, 4); // C3/C4 belong to TV -> Audio System
@@ -167,7 +177,9 @@ void cec_tv_receive(cec_tv_t *t, const cec_frame_t *f, uint32_t now) {
     case 0x7a:
       if (src != 5 || dst != 0) return;
       if (n != 1) break;
-      t->muted = !!(args[0] & 0x80); t->volume = args[0] & 0x7f; return;
+      t->muted = !!(args[0] & 0x80);
+      t->volume = (args[0] & 0x7f) <= 100 ? args[0] & 0x7f : 127;
+      return;
     case 0x00:
       if (src == 5 && n == 2 && (args[0] == 0xc3 || args[0] == 0xc1)) {
         t->arc = CEC_ARC_OFF; t->desired = false;

@@ -13,6 +13,11 @@ static void receive(cec_tv_t *tv, unsigned header, unsigned op, uint32_t now) {
   cec_frame_t f = {.data = {header, op}, .len = 2};
   cec_tv_receive(tv, &f, now);
 }
+static void receive_arg(cec_tv_t *tv, unsigned header, unsigned op,
+                        unsigned arg, uint32_t now) {
+  cec_frame_t f = {.data = {header, op, arg}, .len = 3};
+  cec_tv_receive(tv, &f, now);
+}
 static void controller(void) {
   cec_tv_t tv;
   unsigned n;
@@ -41,6 +46,9 @@ static void controller(void) {
   assert(tv.arc == CEC_ARC_REPORTING && sent[count-1].data[1] == 0xc1);
   cec_tv_tx_result(&tv, CEC_TAG_ENABLE, CEC_TX_OK, 1300000);
   assert(tv.arc == CEC_ARC_ON);
+  n = count; assert(cec_tv_request_audio_status(&tv));
+  assert(count == n + 1 && sent[n].data[0] == 0x05 &&
+         sent[n].data[1] == 0x71 && sent[n].len == 2);
   n = count; cec_tv_request_playback(&tv, 1350000);
   cec_tv_task(&tv, 1350000);
   assert(count == n + 2 && sent[n].data[0] == 0x0f &&
@@ -59,6 +67,11 @@ static void controller(void) {
   receive(&tv, 0x50, 0xc5, 2000000); assert(sent[count-1].data[1] == 0xc2);
   cec_tv_tx_result(&tv, CEC_TAG_DISABLE, CEC_TX_OK, 2100000);
   assert(tv.arc == CEC_ARC_OFF && !tv.desired);
+  n = count;
+  receive_arg(&tv, 0x5f, 0x72, 0, 2150000);
+  assert(tv.arc == CEC_ARC_OFF && count == n);
+  receive(&tv, 0x50, 0xc5, 2160000);
+  assert(tv.arc == CEC_ARC_OFF && count == n); // No redundant 05:C2.
   receive(&tv, 0x50, 0xc0, 2200000); assert(sent[count-1].data[1] == 0);
   receive(&tv, 0x50, 0x9f, 2300000);
   assert(sent[count-1].data[1] == 0x9e && sent[count-1].data[2] == 5);

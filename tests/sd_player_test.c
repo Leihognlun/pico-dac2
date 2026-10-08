@@ -56,6 +56,9 @@ bool cec_arc_audio_allowed(void) { return arc_gate; }
 void cec_arc_set_enabled(bool enabled) {(void)enabled;}
 void cec_arc_request_playback(void) {}
 void cec_arc_volume_key(bool up, bool pressed) {(void)up;(void)pressed;}
+void cec_arc_set_port_playing(unsigned port, bool playing) {
+  assert(port < BOARD_ARC_COUNT); (void)playing;
+}
 #if PICODAC_BOARD_C2
 bool cec_arc_port_audio_allowed(unsigned port) { assert(port < 2); return arc_gate; }
 void cec_arc_request_port_playback(unsigned port) { assert(port < 2); }

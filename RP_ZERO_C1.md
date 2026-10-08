@@ -7,6 +7,12 @@ The C1 configuration has one audio output only:
 SPDIF on GPIO16, converted by the board circuit to HDMI ARC TX. I2S and the
 dual-output build mode are not part of this target.
 
+CEC polls the Soundbar volume. After the device has no playing output for
+`BOARD_CEC_VOLUME_RESET_DELAY_MS`, it steps the volume into
+`BOARD_CEC_DEFAULT_VOLUME +/- BOARD_CEC_VOLUME_TOLERANCE`. The defaults in
+`boards/c1.h` are 20, 2, and 30000 ms, so reported levels 18 through 22 are
+accepted without adjustment.
+
 ## GPIO assignment
 
 | Function | GPIO |

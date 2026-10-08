@@ -8,6 +8,7 @@ uint32_t time_us_32(void){return now;}void gpio_init(unsigned p){(void)p;}void g
 void gpio_pull_up(unsigned p){pins[p]=true;}void gpio_put(unsigned p,int v){pins[p]=v;}int gpio_get(unsigned p){return pins[p];}
 void cec_arc_volume_key(bool up,bool down){last_up=up;last_down=down;++volume_events;}
 void cec_arc_request_playback(void){++system_audio_events;}
+void cec_arc_set_port_playing(unsigned p,bool playing){assert(p==0);(void)playing;}
 static void key(unsigned p,bool down){pins[p]=!down;sd_controls_task();now+=21000;sd_controls_task();}
 int main(void){sd_controls_init();assert(pins[9]&&pins[12]&&pins[20]&&pins[26]);
  key(10,true);key(10,false);assert(!sd_controls_playing());assert(!pins[9]&&!pins[12]&&!pins[20]&&!pins[26]);volume_events=0;

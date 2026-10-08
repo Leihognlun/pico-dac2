@@ -20,3 +20,4 @@ void cec_tv_receive(cec_tv_t *tv, const cec_frame_t *frame, uint32_t now);
 void cec_tv_tx_result(cec_tv_t *tv, uint8_t tag, unsigned result, uint32_t now);
 void cec_tv_request_arc(cec_tv_t *tv, bool on, uint32_t now);
 void cec_tv_request_playback(cec_tv_t *tv, uint32_t now);
+bool cec_tv_request_audio_status(cec_tv_t *tv);

@@ -18,6 +18,9 @@ void spdif_set_port_playing(unsigned p, bool on) {
   enabled[p] = on;
 }
 void cec_arc_request_port_playback(unsigned p) { ++requests[p]; }
+void cec_arc_set_port_playing(unsigned p, bool playing) {
+  assert(p < 2); (void)playing;
+}
 bool cec_arc_port_audio_allowed(unsigned p) { return allowed[p]; }
 void cec_arc_port_volume_key(unsigned p, bool up, bool pressed) {
   if (!pressed) ++releases[p]; else volume[p] = up ? 1 : 2;
@@ -65,11 +68,21 @@ int main(void) {
   // Simultaneous presses are processed in button order; never both selected.
   pins[7] = pins[9] = false; sd_controls_task(); now += 21000; sd_controls_task();
   assert(!enabled[0] && enabled[1] && !pins[6] && pins[8]);
-  assert(!sd_controls_start_from_next());
-  pins[7] = pins[9] = true; now += 21000; sd_controls_task();
+  assert(sd_controls_start_from_next()); // Automatic standby also resumes next.
+  pins[7] = pins[9] = true; sd_controls_task(); now += 21000; sd_controls_task();
   key(9, true); key(9, false);
   now += 10000001u;
   key(9, true); key(9, false);
   assert(!sd_controls_start_from_next());
+  sd_controls_stop();
+  now += 9000000u;
+  sd_controls_stop(); // Already idle: do not restart the ten-second timer.
+  now += 1000001u;
+  key(7, true); key(7, false);
+  assert(!sd_controls_start_from_next());
+  sd_controls_stop();
+  now += 5000000u;
+  key(9, true); key(9, false);
+  assert(sd_controls_start_from_next());
   puts("PASS: C2 stopped boot, exclusive ARC selection/toggle, LEDs, volume release/routing and debounce");
 }

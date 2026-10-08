@@ -53,6 +53,13 @@ int main() {
     usb_device_task();
 
     audio_device_task();
+#if PICODAC_BOARD_C2
+    for (unsigned port = 0; port < BOARD_ARC_COUNT; ++port)
+      cec_arc_set_port_playing(port, audio_device_stream_active() &&
+                                    sd_controls_port_playing(port));
+#else
+    cec_arc_set_port_playing(0, audio_device_stream_active());
+#endif
 #if HID_ENABLE && !PICODAC_BOARD_C2
     usb_hid_led_task(audio_device_stream_active());
 #endif

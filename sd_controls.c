@@ -21,8 +21,8 @@ static atomic_uint start_generation;
 static atomic_bool start_from_next;
 static uint32_t idle_started;
 static bool was_idle;
-static uint32_t manual_stop_at;
-static bool manual_stop_valid;
+static uint32_t stop_at;
+static bool stop_valid;
 
 #define QUICK_RESUME_US 10000000u
 
@@ -59,8 +59,8 @@ void sd_controls_init(void) {
   atomic_store(&play_generation, 0);
   atomic_store(&start_generation, 0);
   atomic_store(&start_from_next, false);
-  manual_stop_at = 0;
-  manual_stop_valid = false;
+  stop_at = 0;
+  stop_valid = false;
   for (unsigned i = 0; i < BOARD_BUTTON_COUNT; ++i) {
     gpio_init(keys[i]); gpio_set_dir(keys[i], GPIO_IN); gpio_pull_up(keys[i]);
     gpio_init(leds[i]); gpio_put(leds[i], false); gpio_set_dir(leds[i], GPIO_OUT);
@@ -72,6 +72,8 @@ void sd_controls_init(void) {
 #if BOARD_ARC_COUNT > 1
   for (unsigned i = 0; i < BOARD_ARC_COUNT; ++i) spdif_set_port_playing(i, false);
 #endif
+  for (unsigned i = 0; i < BOARD_ARC_COUNT; ++i)
+    cec_arc_set_port_playing(i, !!(INITIAL_PLAYING_MASK & (1u << i)));
   update_leds();
 }
 void sd_controls_task(void) {
@@ -87,6 +89,8 @@ void sd_controls_task(void) {
       unsigned previous = mask;
       mask = (mask & bit) ? 0u : bit;
       atomic_store_explicit(&playing_mask, mask, memory_order_release);
+      for (unsigned port = 0; port < BOARD_ARC_COUNT; ++port)
+        cec_arc_set_port_playing(port, !!(mask & (1u << port)));
 #if BOARD_ARC_COUNT > 1
       // Release the old receiver's held volume key before selecting another.
       for (unsigned port = 0; port < BOARD_ARC_COUNT; ++port) {
@@ -100,12 +104,12 @@ void sd_controls_task(void) {
       if (mask & bit) {
         atomic_fetch_add_explicit(&play_generation, 1, memory_order_release);
         if (!previous) {
-          bool resume = manual_stop_valid &&
-                        (uint32_t)(now - manual_stop_at) <= QUICK_RESUME_US;
+          bool resume = stop_valid &&
+                        (uint32_t)(now - stop_at) <= QUICK_RESUME_US;
           atomic_store_explicit(&start_from_next, resume, memory_order_relaxed);
           atomic_fetch_add_explicit(&start_generation, 1,
                                     memory_order_release);
-          manual_stop_valid = false;
+          stop_valid = false;
         }
 #if BOARD_ARC_COUNT > 1
         cec_arc_request_port_playback(i);
@@ -114,8 +118,8 @@ void sd_controls_task(void) {
 #endif
       }
       else if (previous) {
-        manual_stop_at = now;
-        manual_stop_valid = true;
+        stop_at = now;
+        stop_valid = true;
       }
 #if BOARD_ARC_COUNT == 1
       else release_volume(i);
@@ -139,6 +143,11 @@ void sd_controls_task(void) {
 bool sd_controls_playing(void) {
   return atomic_load_explicit(&playing_mask, memory_order_acquire) != 0;
 }
+bool sd_controls_port_playing(unsigned port) {
+  return port < BOARD_ARC_COUNT &&
+      !!(atomic_load_explicit(&playing_mask, memory_order_acquire) &
+         (1u << port));
+}
 #if BOARD_ARC_COUNT > 1
 bool sd_controls_audio_allowed(void) {
   unsigned mask = atomic_load_explicit(&playing_mask, memory_order_acquire);
@@ -151,8 +160,15 @@ bool sd_controls_next_pressed(void) {
 }
 #endif
 void sd_controls_stop(void) {
+  // Automatic EOF standby has the same quick-resume window as a button stop.
+  // Repeated stop calls while already idle must not extend the window.
+  if (sd_controls_playing()) {
+    stop_at = time_us_32();
+    stop_valid = true;
+  }
   atomic_store_explicit(&playing_mask, 0, memory_order_release);
   for (unsigned i = 0; i < BOARD_ARC_COUNT; ++i) {
+    cec_arc_set_port_playing(i, false);
     release_volume(i);
 #if BOARD_ARC_COUNT > 1
     spdif_set_port_playing(i, false);
