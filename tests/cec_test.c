@@ -73,6 +73,17 @@ static void controller(void) {
   receive(&tv, 0x50, 0xc5, 2160000);
   assert(tv.arc == CEC_ARC_OFF && count == n); // No redundant 05:C2.
   receive(&tv, 0x50, 0xc0, 2200000); assert(sent[count-1].data[1] == 0);
+  receive_arg(&tv, 0x5f, 0x72, 1, 2210000);
+  assert(tv.system_audio && tv.desired && tv.arc == CEC_ARC_OFF);
+  receive(&tv, 0x50, 0xc0, 2220000);
+  assert(tv.arc == CEC_ARC_REPORTING && sent[count-1].data[1] == 0xc1);
+  cec_tv_tx_result(&tv, CEC_TAG_ENABLE, CEC_TX_OK, 2230000);
+  assert(tv.arc == CEC_ARC_ON);
+  receive_arg(&tv, 0x5f, 0x72, 0, 2240000);
+  assert(tv.arc == CEC_ARC_STOPPING && !tv.desired);
+  receive(&tv, 0x50, 0xc5, 2250000);
+  cec_tv_tx_result(&tv, CEC_TAG_DISABLE, CEC_TX_OK, 2260000);
+  assert(tv.arc == CEC_ARC_OFF && !tv.desired);
   receive(&tv, 0x50, 0x9f, 2300000);
   assert(sent[count-1].data[1] == 0x9e && sent[count-1].data[2] == 5);
   receive(&tv, 0x50, 0xee, 2400000); assert(sent[count-1].data[1] == 0);

@@ -172,7 +172,15 @@ void cec_tv_receive(cec_tv_t *t, const cec_frame_t *f, uint32_t now) {
       if (src != 5) return;
       if (n != 1 || args[0] > 1) break;
       t->system_audio = args[0];
-      if (!args[0]) cec_tv_request_arc(t, false, now);
+      if (!args[0]) {
+        cec_tv_request_arc(t, false, now);
+      } else {
+        // System Audio Mode On means the Audio System is selecting the TV
+        // audio path.  Accept a following Initiate ARC even if a previous
+        // termination or System Audio Mode Off cleared the local desire.
+        t->desired = true;
+        if (t->arc == CEC_ARC_STOPPING) t->arc = CEC_ARC_OFF;
+      }
       return;
     case 0x7a:
       if (src != 5 || dst != 0) return;

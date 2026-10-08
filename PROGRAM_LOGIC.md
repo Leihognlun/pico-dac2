@@ -262,7 +262,8 @@ sequenceDiagram
 Soundbar 终止 ARC、Standby、系统音频关闭或拒绝请求仍可关闭链路，B1 不覆盖这些事件。
 
 GPIO17 变低时 HPD 输出高、载波许可关闭；变高时 HPD 输出低。
-5V 消失不会重置全部 CEC 注册/握手状态，热插拔重新握手不能视为已完整实现。
+5V 从有到无时会清空该端口 CEC 队列，并重置地址注册、Soundbar 探测、ARC、
+System Audio、音量和地址冲突状态；重新插线后从地址注册开始重新协商。
 CEC=OFF 时相关初始化与任务为空，音频许可接口返回 true，也不配置 HPD/5V 检测。
 
 ## 7. DDC EDID
@@ -328,8 +329,9 @@ CEC 开启时 HID 按键采样直接返回零；第 5 节规则不能视为 USB 
 
 格式解析见 [wav_reader.c](wav_reader.c)、[ac3_burst.c](ac3_burst.c)、[eac3_burst.c](eac3_burst.c)。
 构建入口见 [CMakeLists.txt](CMakeLists.txt)，板级简表见 [RP_ZERO_C1.md](RP_ZERO_C1.md)。
-[CEC_ARC.md](CEC_ARC.md)、[SD_EAC3.md](SD_EAC3.md)、[SPDIF.md](SPDIF.md) 保留历史信息，
-其中旧 GPIO 与旧分支配置不可直接用于 RP-ZERO-C1。
+当前 CEC/ARC 状态机、报文处理、拔线复位及音量控制见 [CEC_ARC.md](CEC_ARC.md)。
+[SD_EAC3.md](SD_EAC3.md) 和 [SPDIF.md](SPDIF.md) 仍包含部分历史信息，其中旧 GPIO
+与旧分支配置不可直接用于 RP-ZERO-C1。
 
 DDC 电平转换、HDMI 5V 检测电路、SPDIF→ARC 电气转换由外部硬件完成。
 GPIO 不直接接 5V 总线；本程序不是完整 HDMI TV 或 eARC 实现。

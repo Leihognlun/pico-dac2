@@ -1,126 +1,320 @@
-# CEC TV / ARC TX 测试版
+# CEC / ARC 处理逻辑
 
-2026-09-17，分支 `arc-tx-eac3`。新增 CEC 控制，不解码或重新编码 EAC3。
-参考 [gkoh/pico-cec](https://github.com/gkoh/pico-cec) 的开漏 GPIO 和 CEC 时序思路，
-此处使用独立的定时状态机，不引入其 FreeRTOS 任务系统。
-ARC 消息方向参考 [Android TV 实现](https://android.googlesource.com/platform/frameworks/base/+/471eead4a327606b5b581659e04698b5ebdafd16/services/core/java/com/android/server/hdmi/HdmiCecLocalDeviceTv.java)，
-操作码参考 [Linux CEC 定义](https://www.kernel.org/doc/html/v5.17/userspace-api/media/cec/cec-header.html)。
+本文档描述当前固件作为 HDMI TV 侧设备时的 CEC、ARC、HDMI Detect、HPD 和
+Soundbar 音量控制逻辑。实际行为以 `cec_arc.c`、`cec_tv.c` 和所选 `boards/*.h`
+配置为准。
 
-## 接线与操作
+| 设备 | CEC 逻辑地址 | 物理地址 |
+| --- | --- | --- |
+| 本设备（TV） | `0` | `0.0.0.0` |
+| Soundbar（Audio System） | `5` | 由 Soundbar 管理 |
+| 广播地址 | `F` | — |
 
-所有编号均为 **GPIO 编号**。
+本设备模拟独立 TV，不应与另一台使用地址 `0` 的真实 TV 共用 CEC 总线。固件实现
+ARC，不是 eARC，也不解码或重新编码音频数据。
 
-| 功能 | GPIO | 标准 Pico 物理脚 | 说明 |
-| --- | --- | --- | --- |
-| CEC | GP18 | 24 | 开漏：只拉低或释放，接外部 CEC 接口电路 |
-| DDC SDA | GP6 | 9 | I2C1 从设备，接双向电平转换 |
-| DDC SCL | GP7 | 10 | I2C1 时钟，由 Soundbar 主机提供 |
-| SPDIF → ARC 电路 | GP8 | 11 | 接用户已设计的 SPDIF 转 ARC 电路输入 |
-| TF SCLK / MOSI / MISO / CS | GP2 / 3 / 4 / 5 | 4 / 5 / 6 / 7 | SPI0，保持原接线 |
-| ARC 开关按键 | GP10 | 14 | 按下接地，切换开启/关闭 |
-| Soundbar 音量加 | GP26 | 31 | 按下接地，长按重复 |
-| Soundbar 音量减 | GP27 | 32 | 按下接地，长按重复 |
+## 1. 板级配置
 
-GP18 原为 I2S DATA，因此本版禁用 I2S，要求 `PICODAC_OUTPUT=SPDIF`。
-按键和 LED 不占 GP18，不需屏蔽；USB 模式下上述按键改为 CEC 控制，不再同时
-向 USB 主机发送媒体按键。USB 模式禁用第三路 LED（GP26/GP28），LED 报告第三位固定为零，
-其余两路保留；TF 模式不初始化 USB LED。GP13 不再控制 ARC 音量。
-CEC GPIO 无内部上拉；需要外部合适的上拉、开漏接口、电平保护和共地。
-不要把 GP18 接到 5V，也不要把 GP8 直接接 HDMI ARC 差分线。
+引脚和可调参数来自 `boards/c1.h` 或 `boards/c2.h`：
 
-## ARC 行为
+| 配置项 | C1 | C2 | 说明 |
+| --- | ---: | ---: | --- |
+| `BOARD_ARC_COUNT` | 1 | 2 | ARC/CEC 端口数 |
+| `BOARD_HPD` | GP18 | GP28 | 共用 HPD，低有效 |
+| `BOARD_ARC1_CEC` | GP19 | GP24 | 端口 1 CEC |
+| `BOARD_ARC1_DETECT` | GP17 | GP29 | 端口 1 HDMI 5V 检测，高有效 |
+| `BOARD_ARC2_CEC` | — | GP22 | 端口 2 CEC |
+| `BOARD_ARC2_DETECT` | — | GP19 | 端口 2 HDMI 5V 检测，高有效 |
+| `BOARD_CEC_DEFAULT_VOLUME` | 20 | 20 | 默认目标音量 |
+| `BOARD_CEC_VOLUME_TOLERANCE` | 2 | 2 | 默认音量误差 |
+| `BOARD_CEC_VOLUME_RESET_DELAY_MS` | 30000 | 30000 | 全设备停止播放后的等待时间 |
 
-设备固定作为 TV：逻辑地址 `0`，物理地址 `0.0.0.0`；Soundbar 为 Audio System，逻辑地址 `5`。
-开机约 1 秒后先探测地址 0。若已有 TV 应答，本机停止注册和 ARC 输出，避免地址冲突；
-因此本固件适用于 Pico 替代 TV 的独立链路，不适合与真实 TV 共用 CEC 总线。
+CEC GPIO 为开漏方式：固件只主动拉低，发送高电平时切换为输入释放总线，且不启用
+内部上拉。必须使用外部 CEC 接口、上拉和电平保护，不能将 Pico GPIO 直接接到
+HDMI 5V 信号。
 
-1. TV → Soundbar：`05 70 00 00` 请求 System Audio；`05 C3` 请求 ARC 开启。
-2. Soundbar → TV：`50 C0` Initiate ARC。
-3. TV → Soundbar：`05 C1` Report ARC Initiated，**发送得到 ACK 后**才开启 GPIO8 载波。
-4. 本地关闭：立即停止载波，发送 `05 C4` 和 `05 70`。
-5. Soundbar 回复或主动发送 `50 C5` 时，停止载波并发送 `05 C2`。
+## 2. 端口和总线维护
 
-开始阶段无应答会超时后重试；单帧发送最多尝试 3 次。收到明确拒绝、Standby 或
-Soundbar 关闭 System Audio 后不强行重启，可用 GP10 重新请求。
-本固件不把 Soundbar 拔线视为可靠可检测事件；没有 HPD 管理，未收到关闭消息时
-可能仍维持已开启的载波。故障恢复可按两次 GP10 或重新上电。
-音量使用 `User Control Pressed (44)` 的 `41/42` 与 `User Control Released (45)`，
-长按约每 300 ms 重复。调的是 Soundbar，不改动压缩音频数据。
+每个端口独立维护 CEC 收发、地址注册、Soundbar 存在状态、ARC 状态机、8 帧发送
+队列、音量键、默认音量复位和音频链路许可。C2 两路的协商和消息队列互不干扰。
 
-支持基础物理地址、OSD 名称、CEC 版本、电源状态查询及音频状态接收；
-未实现完整 HDMI TV 功能、HPD/+5V 管理、厂商私有命令或 eARC。
-CEC 关闭是 ARC 音频关闭，不是 Pico 断电，电源状态查询仍报告 On。
-外部 HDMI 电路必须自行满足 Soundbar 建链所需条件；不能仅凭 CEC 握手保证 Atmos 兼容性。
+CEC 位级状态机由 50 us 定时器驱动；帧解析、发送队列和业务状态机在主循环的
+`cec_arc_task()` 中处理。普通帧发送失败最多尝试 3 次。地址轮询帧不做帧级重发，
+而由状态机安排下一次轮询。
 
-## 已生成的测试固件
+HPD 为所有端口共用：任一路 HDMI Detect 为高时拉低 HPD；所有端口均断开时释放
+HPD。
 
-两种固件现均包含下述 DDC EDID 从设备。
+### 2.1 CEC 操作总流程
 
-- TF：`build/arc-tx-eac3/mdac_adc2.uf2`。TF 根目录 `TRACK.EC3`，裸 48 kHz EAC3；
-  文件选择、格式和 FAT 限制沿用 [TF 文档](SD_EAC3.md)。不是自动寻找任意文件。
-- USB：`build/arc-tx-usb/mdac_adc2.uf2`。仍作为 USB 声卡接收音频，CEC 成功后输出。
-- 原可用归档 `build/releases/mdac_sd_eac3_usable_20260916.uf2` 未修改。
+下面流程对每个 ARC 端口独立执行；C2 会分别运行两套相同的端口状态机。
 
-TF 版保留可用基线的 `PICODAC_SD_DIAGNOSTICS=ON`、`PICODAC_SD_UART_LOG=OFF`，
-保留统计与计时而不输出 UART 日志。系统时钟仍为 120 MHz，192 kHz Non-PCM 载波。
-ARC 未开启时不消耗 TF 播放位置；中途关闭后重新开启，从当前完整 IEC 61937 burst
-的头部恢复，最多重放一个 32 ms burst。USB 模式没有暂停主机，恢复时由接收器
-重新同步后续 IEC 61937 burst。
-
-## 编译（PowerShell，SDK 自带 Ninja）
-
-```powershell
-$arcCmake = "$env:USERPROFILE/.pico-sdk/cmake/v4.3.4/bin/cmake.exe"
-$arcNinja = "$env:USERPROFILE/.pico-sdk/ninja/v1.13.2/ninja.exe"
-& $arcCmake -S . -B build/arc-tx-eac3 -G Ninja "-DCMAKE_MAKE_PROGRAM=$arcNinja" `
-  -DCMAKE_BUILD_TYPE=Release -DPICODAC_INPUT=SD_EAC3 -DPICODAC_OUTPUT=SPDIF `
-  -DPICODAC_SPDIF_PIN=8 -DPICODAC_CEC=ON -DPICODAC_CEC_PIN=18 `
-  -DPICODAC_DDC=ON `
-  -DPICODAC_SD_DIAGNOSTICS=ON -DPICODAC_SD_UART_LOG=OFF
-& $arcNinja -C build/arc-tx-eac3
+```mermaid
+flowchart TD
+    BOOT([上电初始化]) --> DETECT{HDMI Detect<br/>是否为高？}
+    DETECT -- 否 --> IDLE[释放该端口 CEC<br/>关闭载波许可]
+    IDLE --> DETECT
+    DETECT -- 是 --> POLLTV[轮询 TV 地址 0]
+    POLLTV --> TVACK{地址 0 是否 ACK？}
+    TVACK -- 是 --> CONFLICT[标记地址冲突<br/>禁止 ARC 输出]
+    CONFLICT --> DETECT
+    TVACK -- 否，NACK --> REGISTER[注册为 TV 0<br/>广播 Report Physical Address]
+    REGISTER --> POLLSB[轮询 Audio System 地址 5]
+    POLLSB --> SBACK{地址 5 是否 ACK？}
+    SBACK -- 否 --> WAIT2[等待约 2 秒] --> POLLSB
+    SBACK -- 是 --> NEGOTIATE[进入 ARC 协商]
+    NEGOTIATE --> ARCSTATE[运行 ARC 状态机]
+    ARCSTATE --> PRESENT{HDMI Detect<br/>仍为高？}
+    PRESENT -- 是 --> ARCSTATE
+    PRESENT -- 否 --> RESET[停止载波并清空队列<br/>重置注册、ARC、音量和冲突状态]
+    RESET --> IDLE
 ```
 
-首次配置需要下载固定版本 pico_fatfs；离线可额外指定已有源码目录：
-`-DFETCHCONTENT_SOURCE_DIR_PICO_FATFS=D:/RaspberryPi-Pico/pico-demo/pico-dac2/build/reference-pico-fatfs`。
-USB 构建改用 `-B build/arc-tx-usb -DPICODAC_INPUT=USB`，其他 CEC/引脚参数保持相同。
-请使用独立构建目录，旧 `build` 的缓存不会自动迁移到新接线。
+### 2.2 ARC 建链、断开和重新激活流程
 
-## 验证范围与排查
+```mermaid
+flowchart TD
+    OFF([ARC_OFF]) --> WANT{收到播放请求<br/>或希望自动建链？}
+    WANT -- 是 --> REQ[发送 05:70:00:00<br/>发送 05:C3]
+    REQ --> REQUESTED[ARC_REQUESTED<br/>等待 50:C0]
+    REQUESTED --> C0{4 秒内收到<br/>有效 50:C0？}
+    C0 -- 否 --> OFF
+    C0 -- 是且 desired=true --> C1[发送 05:C1]
+    C0 -- 是但 desired=false --> ABORT[回复 05:00:C0:04] --> OFF
+    C1 --> C1ACK{05:C1 得到 ACK？}
+    C1ACK -- 是 --> ON([ARC_ON<br/>开放该端口载波许可])
+    C1ACK -- 否 --> OFF
 
-已通过主机 CEC 收发/握手/音量测试、原有 USB 与 EAC3 测试，以及两种输入的 SDK 编译。
-仍需实机确认 CEC 电气波形、Soundbar 握手和连续播放稳定性；本版不能直接替代先前实测结论。
-CEC 每 50 us 用短定时回调采样，消息队列/按键/握手在主循环处理；不在中断内打印或等待。
-DMA 音频中断仍保持最高优先级，CEC 遇到严重计时迟到会释放总线并报错重试。
+    ON --> STOP{收到 Standby、72:00、7E:00、50:C5<br/>或本地关闭？}
+    STOP -- 否 --> ON
+    STOP -- 是 --> STOPPING[ARC_STOPPING<br/>立即撤销载波许可]
+    STOPPING --> LOCAL{是否为本地关闭流程？}
+    LOCAL -- 是 --> CLOSEMSG[发送 05:C4 和 05:70]
+    LOCAL -- 否 --> C5CHECK{收到 50:C5 时<br/>ARC 是否已为 OFF？}
+    C5CHECK -- 否 --> C2[发送 05:C2<br/>成功或超时后关闭] --> OFF
+    C5CHECK -- 是 --> OFF
+    CLOSEMSG --> CLOSEWAIT[等待对端终止<br/>或等待 4 秒超时] --> OFF
 
-可用调试器观察：`cec_rx_frames`、`cec_tx_frames`、`cec_tx_errors`、`cec_rx_errors`、
-`cec_address_conflict`、`cec_arc_state`（0 关闭、1 等待 C0、2 等待 C1 发送成功、3 开启、4 正在关闭）。
-若 GPIO8 没信号，先检查是否有 `05 C3 → 50 C0 → 05 C1`，以及地址冲突和 CEC 电平。
-本测试版不新增 CEC 串口日志。
+    OFF --> MODEON{收到 5F/50:72:01？}
+    MODEON -- 是 --> ENABLE[设置 System Audio On<br/>恢复 desired=true]
+    ENABLE --> SBC0{随后收到 50:C0？}
+    SBC0 -- 是 --> C1
+    SBC0 -- 否 --> RETRY[等待当前重试时刻<br/>再由 TV 主动协商] --> REQ
 
-## DDC / EDID 从设备
+    STOPPING --> PLAY{此时按播放键？}
+    PLAY -- 是 --> CANCEL[取消停止并转为 ARC_OFF] --> REQ
+    PLAY -- 否 --> CLOSEWAIT
+```
 
-`PICODAC_DDC=ON`：I2C1，SDA=GP6、SCL=GP7，7 位地址 `0x50`
-（总线地址字节写 `0xA0`、读 `0xA1`）。新构建默认随 CEC 开启；已有缓存可显式设置。
-采用 SDK 的 [pico_i2c_slave 中断接口](https://www.raspberrypi.com/documentation/pico-sdk/high_level.html#group_pico_i2c_slave)，
-主机提供时钟，支持硬件 clock stretching；不占用音频主循环，不输出串口日志。
-初始化先于 CEC 和 TF/USB，因此尚未建立 ARC 或 TF 挂载失败时也可读取 EDID。
+图中的 `05:00:C0:04` 只会在收到 `50:C0` 时 ARC 仍不允许开启的情况下发送。
+Soundbar 先发送 `5F:72:01` 或 `50:72:01` 会恢复 `desired=true`，因此随后发送
+`50:C0` 时，TV 会进入 `05:C1` 分支并重新连接 ARC。
 
-数据源为用户提供的 `ep-edid-retek-2000.bin`，256 字节，内置于 `ddc_edid_data.c`。
-逐字节对比原文件一致；128 字节基本块与一个 CTA 扩展块的校验和均为零。
-SHA-256：`0a6848a83cddc06dc2db6fe4909122351c22f186180ece805e96712161223b8c`。
-不依赖桌面文件或 TF 卡，不改写能力声明和 HDMI VSDB 地址字段；它们不代表固件
-已实现所有声明功能。Soundbar 是否接受该 EDID、是否会在其 ARC 端口发起读取需实测。
+### 2.3 音量监控和默认音量复位流程
 
-读取例：START → `0x50 W` → 偏移 `0x00` → repeated START → `0x50 R` → 读 128 字节 → STOP；
-扩展块偏移为 `0x80`。也支持写偏移后 STOP 再读、连续读 256 字节及当前位置读取。
-偏移超过 `0xFF` 回绕到 `0x00`；STOP/重启不清空读指针。每次写事务的首字节设置偏移，
-后续写入字节丢弃，EDID 只读。只有 256 字节，**不响应 `0x30` E-DDC 段指针或其他地址**。
+```mermaid
+flowchart TD
+    START([端口音量任务]) --> LINK{HDMI 已连接<br/>并且 ARC_ON？}
+    LINK -- 否 --> CLEAR[停止自动音量键<br/>不发送 05:71] --> END([等待下次任务])
+    LINK -- 是 --> PLAYING{整台设备是否有<br/>任一端口正在播放？}
+    PLAYING -- 是 --> MONITOR[约每 5 秒发送 05:71<br/>仅监控音量] --> END
+    PLAYING -- 否 --> DELAY{所有端口停止时间是否达到<br/>BOARD_CEC_VOLUME_RESET_DELAY_MS？}
+    DELAY -- 否 --> MONITOR
+    DELAY -- 是 --> QUERY[发送 05:71<br/>等待新的 50:7A:xx]
+    QUERY --> FRESH{收到有效的新音量？}
+    FRESH -- 否 --> QUERY
+    FRESH -- 是 --> RANGE{音量是否在默认值<br/>加减误差范围内？}
+    RANGE -- 是 --> END
+    RANGE -- 低于范围 --> UP[发送一次音量加<br/>05:44:41 / 05:45]
+    RANGE -- 高于范围 --> DOWN[发送一次音量减<br/>05:44:42 / 05:45]
+    UP --> WAIT[等待约 500 ms]
+    DOWN --> WAIT
+    WAIT --> QUERY
+```
 
-HDMI DDC 侧可能存在 5V 上拉，必须使用合适的双向开漏电平转换并共地，
-Pico 侧上拉至 3.3V；固件禁用 GP6/7 内部上拉。不得将 GPIO 直接接 5V 总线。
-不要让同一总线上其他 EDID EEPROM 同时响应 `0x50`。HPD 和 HDMI +5V 仍由外部电路处理。
-GPIO6/7 与默认 TF GPIO2/3/4/5 不冲突；自定义引脚冲突会由 CMake 拒绝。
+任一端口重新开始播放时，全局停止计时和所有端口的自动调整都会立即取消。只有仍然
+连接且处于 `ARC_ON` 的端口会参与默认音量复位。
 
-主机测试覆盖初始化、偏移写入、重复起始事件、分块与连续读取、回绕、写保护和校验和；
-未验证真实 DDC 波形、clock stretching 兼容性及其与 CEC/音频同时运行的稳定性。
-调试计数：`ddc_read_bytes`（提供给 TX FIFO 的字节数）、`ddc_offset_writes`、`ddc_ignored_writes`。
+## 3. 连接、拔线和地址注册
+
+上电后每个端口默认希望开启 ARC，但只有该端口 HDMI 5V 存在且完成 CEC/ARC 协商
+后，才允许输出载波。
+
+初始化约 1 秒后轮询 TV 地址 `0`：
+
+- 得到 ACK：已有 TV 占用地址 `0`，设置地址冲突并停止该端口注册和 ARC 输出；
+- 得到 NACK：注册为 TV 地址 `0`，广播 `0F:84:00:00:00`；
+- 总线错误：约 2 秒后重试。
+
+注册后轮询 Audio System 地址 `5`。得到 ACK 后标记 Soundbar 存在并开始 ARC 协商；
+未检测到时约每 2 秒重新轮询。
+
+当某端口 HDMI Detect 从高变低时，立即：
+
+- 停止该端口载波并关闭 ARC 指示；
+- 清空发送队列和重试计数，重置位级收发器；
+- 清除地址注册、冲突、Soundbar 存在、System Audio、ARC、音量键和复位状态；
+- 将 CEC GPIO 切回输入释放状态。
+
+重新插入后会从地址注册开始重新协商，不会沿用拔线前收到的 Terminate ARC、
+System Audio Mode Off 或其他 CEC 状态。
+
+## 4. ARC 状态机
+
+| 数值 | 状态 | 含义 |
+| ---: | --- | --- |
+| 0 | `CEC_ARC_OFF` | ARC 关闭 |
+| 1 | `CEC_ARC_REQUESTED` | 等待 Soundbar 的 `50:C0` |
+| 2 | `CEC_ARC_REPORTING` | 正在发送 `05:C1` |
+| 3 | `CEC_ARC_ON` | ARC 已建立 |
+| 4 | `CEC_ARC_STOPPING` | 正在终止 ARC |
+
+### 4.1 开启
+
+正常握手：
+
+1. TV 发送 `05:70:00:00`：System Audio Mode Request，地址 `0.0.0.0`。
+2. TV 发送 `05:C3`：Request ARC Initiation。
+3. Soundbar 回复 `50:C0`：Initiate ARC。
+4. TV 发送 `05:C1`：Report ARC Initiated。
+5. `05:C1` 得到 ACK 后进入 `ARC_ON`。
+
+请求和报告阶段超时均为 4 秒；失败后回到 `OFF`，通常约 5 秒后再尝试。Soundbar
+对 `C3` 或 `C1` 返回 Feature Abort 时，固件关闭 ARC 并取消自动重启，直到再次按
+播放键。
+
+### 4.2 播放键重新选择输入
+
+ARC 未连接或已关闭时按播放键，会设置 ARC 为期望开启，发送带物理地址的
+`05:70:00:00` 并重新协商。若当时处于 `STOPPING`，先转为 `OFF`，不会继续关闭。
+
+ARC 已经为 `ON` 时不重复握手，而是广播：
+
+- `0F:86:00:00`：Set Stream Path；
+- `0F:82:00:00`：Active Source，TV。
+
+这用于 Soundbar 被切换到其他本地输入后重新选择 TV/ARC。因此在 `STOPPING` 时按
+播放，后续发送的是 `05:70:00:00`，不是关闭 System Audio 使用的 `05:70`。
+
+### 4.3 关闭
+
+本地请求关闭时立即撤销载波许可并进入 `STOPPING`，随后发送：
+
+- `05:C4`：Request ARC Termination；
+- `05:70`：System Audio Mode Request Off（无物理地址参数）。
+
+收到 `50:C5`（Terminate ARC）时：
+
+- ARC 尚未关闭：进入 `STOPPING`，取消开启期望，并回复 `05:C2`；
+- ARC 已经为 `OFF`：保持关闭，不再重复发送 `05:C2`。
+
+后一规则避免 Soundbar 广播 `5F:72:00` 后又发送 `50:C5` 时，TV 在 ARC 已断开的
+情况下重复回复 `05:C2`。`STOPPING` 最长等待 4 秒；`05:C2` 发送完成或超时后进入
+`OFF`。
+
+## 5. 主要接收消息
+
+| 收到的消息 | 名称 | 当前处理 |
+| --- | --- | --- |
+| `50:C0` | Initiate ARC | 期望开启时回复 `05:C1`，否则 Feature Abort/Refused |
+| `50:C5` | Terminate ARC | 未关闭时回复 `05:C2`；已经关闭时不回复 `C2` |
+| `5F:72:00`、`50:72:00` | Set System Audio Mode Off | 记录 Off，并开始关闭 ARC |
+| `5F:72:01`、`50:72:01` | Set System Audio Mode On | 记录 On，恢复 ARC 开启意图，允许随后由 `50:C0` 激活 ARC |
+| `50:7E:00/01` | System Audio Mode Status | 更新状态；Off 时关闭 ARC |
+| `50:7A:xx` | Report Audio Status | 更新静音位和 0–100 音量 |
+| `50:8F` | Give Device Power Status | 回复 `05:90:00`，报告 On |
+| `50:83` | Give Physical Address | 广播 `0F:84:00:00:00` |
+| `50:46` | Give OSD Name | 回复 `05:47` 和 `Pico ARC TV` |
+| `50:9F` | Get CEC Version | 回复 `05:9E:05`，即 CEC 1.4 |
+| `5F:36` 或定向 Standby | Standby | 请求关闭 ARC |
+
+ARC 操作码 `C0`–`C5` 只接受来自地址 `5`、定向发给地址 `0` 且没有多余参数的消息。
+不属于 Soundbar → TV 方向的 `C1/C3/C4` 会回复 Feature Abort/Refused。
+
+不支持的定向操作码会收到 Feature Abort/Unsupported Opcode；参数数量或数值错误会收到
+Invalid Operand。Feature Abort 本身不会再次触发 Feature Abort。
+
+`05:00:C0:xx` 表示 TV 地址 `0` 向 Soundbar 地址 `5` 发送 Feature Abort：`C0` 是被
+拒绝的操作码，`xx` 是原因。缺少原因字节的 `05:00:C0` 不是完整的标准 Feature
+Abort 帧。
+
+## 6. 音量按键、监控和默认音量复位
+
+手动音量使用 User Control：
+
+- 音量加按下：`05:44:41`；
+- 音量减按下：`05:44:42`；
+- 释放：`05:45`；
+- 持续按住时约每 300 ms 重发按下消息。
+
+它只改变 Soundbar 音量，不修改音频数据。C2 音量键只发给当前选择的 ARC 端口。
+
+固件仅在对应端口同时满足 HDMI Detect 为高和 `ARC_ON` 时发送 `05:71`（Give Audio
+Status）。ARC 未连接、协商中、停止中或 HDMI 已拔出时不会持续询问音量。正常监控
+间隔为 5 秒。
+
+默认音量复位按“整台设备”计时，而不是某个被切走端口单独计时：
+
+1. 任一端口还在播放时，不执行复位；
+2. 所有端口停止播放后，等待 `BOARD_CEC_VOLUME_RESET_DELAY_MS`；
+3. 到时后，所有仍连接且为 `ARC_ON` 的端口才开始调整；
+4. 每次先发送 `05:71`，仅使用新收到的 `50:7A:xx` 判断；
+5. 低于允许范围时模拟一次音量加，高于范围时模拟一次音量减；
+6. 按键后约 500 ms 再查询，逐级调整至允许范围；
+7. 任一端口重新播放时，立即停止所有自动调整。
+
+允许范围为默认音量加减误差，并限制在 0–100。默认值为 20、误差为 2，因此
+18–22 均满足要求。静音位会被记录，但当前复位逻辑不主动取消静音。
+
+## 7. 音频载波许可
+
+端口只有同时满足以下条件才允许输出载波：
+
+```text
+HDMI Detect 为高
+AND TV 地址已注册
+AND 无地址冲突
+AND ARC 状态为 ARC_ON
+AND ARC 仍为期望开启
+```
+
+CEC/HPD/DDC 链路维护独立于播放器状态。播放器停止或端口被切走时，ARC 可以保持，
+SPDIF 层可发送静音/无效音频载荷以防 Soundbar 自动待机；但 HDMI 拔线、ARC 关闭或
+地址冲突会立即撤销载波许可。
+
+## 8. 诊断和排查
+
+| 变量 | 含义 |
+| --- | --- |
+| `cec_rx_frames` | 所有端口成功接收帧数 |
+| `cec_tx_frames` | 所有端口成功发送帧数 |
+| `cec_tx_errors` | 所有端口发送失败数 |
+| `cec_rx_errors` | 所有端口接收错误和丢帧之和 |
+| `cec_arc_state` | 端口 1 ARC 状态，数值见第 4 节 |
+| `cec_address_conflict` | 端口 1 是否存在 TV 地址冲突 |
+
+为兼容旧调试流程，后两个变量只反映端口 1；帧和错误计数为全部端口汇总。
+
+无音频输出时依次检查 HDMI Detect、HPD、地址冲突、地址 `5` 是否响应、是否出现
+`05:C3 → 50:C0 → 05:C1`、`05:C1` 是否获得 ACK，以及 CEC 外部电路和相应端口
+SPDIF/ARC 输出路径。
+
+## 9. 功能边界与验证
+
+- 支持基础 ARC、System Audio、音量键、音频状态、电源状态、物理地址、OSD 名称和
+  CEC 版本响应；
+- 不支持 eARC、完整 HDMI TV 功能或厂商私有命令；
+- 电源状态始终报告 On，因为关闭 ARC 不等于 Pico 断电；
+- CEC 握手成功不能单独保证某种 Soundbar 或 Atmos 格式兼容；
+- DDC/EDID 及完整板卡接线见 `RP_ZERO_C2.md` 和 `PROGRAM_LOGIC.md`。
+
+CEC 由 `PICODAC_CEC` 控制，默认开启；启用时编译 `cec_wire.c`、`cec_tv.c` 和
+`cec_arc.c`。构建应复用现有 C1/C2 构建目录及缓存的 Pico 工具链，不新建目录或重复
+下载依赖。回归测试入口为：
+
+```powershell
+python tests/run_tests.py
+```
+
+主机测试可覆盖状态机和消息处理；真实 CEC 电气波形、Soundbar 兼容性以及 CEC、
+DDC、双路音频同时工作的稳定性仍需实机验证。
