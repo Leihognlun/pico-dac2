@@ -1,4 +1,4 @@
-Language: [English](README.md) | [日本語](README.ja.md)
+Language: [English](README.md) 
 
 # Raspberry Pi Pico USB DAC
 
