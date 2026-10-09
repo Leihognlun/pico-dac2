@@ -59,6 +59,7 @@ int main() {
                                     sd_controls_port_playing(port));
 #else
     cec_arc_set_port_playing(0, audio_device_stream_active());
+    board_status_set_arc_selected(0, audio_device_stream_active());
 #endif
 #if HID_ENABLE && !PICODAC_BOARD_C2
     usb_hid_led_task(audio_device_stream_active());

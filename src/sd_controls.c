@@ -1,5 +1,6 @@
 #include "sd_controls.h"
 #include "board.h"
+#include "board_status.h"
 #include "cec_arc.h"
 #include "spdif.h"
 #include "pico/stdlib.h"
@@ -28,6 +29,8 @@ static bool stop_valid;
 
 static void update_leds(void) {
   unsigned mask = atomic_load_explicit(&playing_mask, memory_order_acquire);
+  for (unsigned i = 0; i < BOARD_ARC_COUNT; ++i)
+    board_status_set_arc_selected(i, !!(mask & (1u << i)));
   uint32_t now = time_us_32();
   if (!mask && !was_idle) idle_started = now;
   was_idle = !mask;

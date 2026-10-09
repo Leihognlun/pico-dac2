@@ -17,6 +17,11 @@ bool add_repeating_timer_us(int64_t period, bool (*fn)(repeating_timer_t *),
 void panic(const char *s) { (void)s; abort(); }
 void spdif_set_link_enabled(bool on) { links[0] = links[1] = on; }
 void spdif_set_port_link_enabled(unsigned p, bool on) { links[p] = on; }
+static void sample_detect(uint32_t at) {
+  now = at;
+  tick(&timer);
+  cec_arc_task();
+}
 static void receive(unsigned port, uint8_t opcode) {
   ports[port].wire.received = (cec_frame_t){.data = {0x50, opcode}, .len = 2};
   ports[port].wire.rx_ready = true;
@@ -32,10 +37,26 @@ static void report_volume(unsigned port, uint8_t volume) {
 int main(void) {
   board_status_init();
   cec_arc_init();
-  assert(!links[0] && !links[1] && levels[28]);
+  board_status_set_arc_selected(0, true);
+  board_status_set_arc_selected(1, true);
+  assert(!links[0] && !links[1] && !levels[28]); // TV/DDC ready: HPD asserted.
   levels[29] = true;
+  sample_detect(0);
+  assert(!ports[0].present && !ports[1].present &&
+         !links[0] && !links[1]);
+  sample_detect(50000);
+  levels[29] = false; sample_detect(50001);
+  assert(!ports[0].present && ports[0].count == 0); // 50 ms pulse rejected.
+  levels[29] = true; sample_detect(100000);
+  sample_detect(199999);
+  assert(!ports[0].present && ports[0].count == 0);
+  sample_detect(200000);
+  assert(ports[0].present && !ports[1].present && ports[0].count == 0);
+  ports[0].tv.retry_at = 0;
+  ++now;
   cec_arc_task();
-  assert(!levels[28] && !links[0] && !links[1]);
+  assert(ports[0].count == 1 && ports[0].tv.polling);
+  assert(ports[1].count == 0 && !ports[1].tv.polling);
   for (unsigned i = 0; i < 2; ++i) {
     ports[i].tv.registered = true;
     ports[i].tv.arc = CEC_ARC_ON;
@@ -43,7 +64,15 @@ int main(void) {
   cec_arc_task();
   board_status_task();
   assert(links[0] && !links[1] && levels[17] && !levels[16]);
-  levels[19] = true; cec_arc_task(); board_status_task();
+  levels[19] = true; sample_detect(now); board_status_task();
+  sample_detect(now + 99999);
+  assert(!ports[1].present && links[0] && !links[1]);
+  sample_detect(now + 1);
+  assert(ports[1].present && links[0] && !links[1]);
+  assert(links[0] && !links[1]);
+  ports[1].tv.registered = true;
+  ports[1].tv.arc = CEC_ARC_ON;
+  cec_arc_task(); board_status_task();
   assert(links[0] && links[1] && levels[16]);
   ports[0].head = ports[0].tail = ports[0].count = 0;
   ports[0].tv.soundbar_present = true;
@@ -91,14 +120,14 @@ int main(void) {
   cec_arc_port_volume_key(1, true, false);
   assert(!ports[1].tv.key);
   now = 32000000;
-  levels[29] = false; cec_arc_task();
+  levels[29] = false; sample_detect(now);
   assert(!levels[28] && links[1]);
   assert(!ports[0].tv.registered && ports[0].tv.desired &&
          !ports[0].tv.soundbar_present && ports[0].tv.arc == CEC_ARC_OFF &&
          ports[0].tv.volume == 127 && ports[0].count == 0 &&
          ports[0].wire.address == 15);
-  levels[19] = false; cec_arc_task(); board_status_task();
-  assert(levels[28] && !links[0] && !links[1]);
+  levels[19] = false; sample_detect(now); board_status_task();
+  assert(!levels[28] && !links[0] && !links[1]);
   assert(!cec_arc_audio_allowed() && !levels[17] && !levels[16]);
-  puts("PASS: independent CEC ports, link gates, volume routing and shared HPD OR");
+  puts("PASS: 100 ms independent detect, ready HPD, CEC gates and volume routing");
 }

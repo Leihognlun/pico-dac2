@@ -6,6 +6,9 @@
 static bool pins[30], enabled[2], allowed[2] = {true, true};
 static unsigned requests[2], volume[2], releases[2];
 static uint32_t now;
+void board_status_set_arc_selected(unsigned p, bool selected) {
+  assert(p < 2); (void)selected;
+}
 uint32_t time_us_32(void) { return now; }
 void gpio_init(unsigned p) { assert(p >= 6 && p <= 15); }
 void gpio_set_dir(unsigned p, int d) { (void)p; (void)d; }

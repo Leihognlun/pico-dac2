@@ -9,6 +9,7 @@ static const unsigned yellow_pins[] = {BOARD_ARC1_LED,
 #endif
 };
 static bool arc[BOARD_ARC_COUNT];
+static bool arc_selected[BOARD_ARC_COUNT];
 static unsigned errors;
 static atomic_bool fatal;
 static board_error_pattern_t green;
@@ -43,12 +44,16 @@ void board_status_init(void) {
   gpio_set_dir(BOARD_STATUS_LED, GPIO_OUT);
   for (unsigned i = 0; i < BOARD_ARC_COUNT; ++i) {
     arc[i] = false;
+    arc_selected[i] = false;
     gpio_init(yellow_pins[i]); gpio_put(yellow_pins[i], false);
     gpio_set_dir(yellow_pins[i], GPIO_OUT);
   }
 }
 void board_status_set_arc(unsigned port, bool enabled) {
   if (port < BOARD_ARC_COUNT) arc[port] = enabled;
+}
+void board_status_set_arc_selected(unsigned port, bool selected) {
+  if (port < BOARD_ARC_COUNT) arc_selected[port] = selected;
 }
 void board_status_set_error(board_error_t error, bool active) {
   if (atomic_load(&fatal) || error == BOARD_ERROR_NONE) return;
@@ -72,7 +77,8 @@ void board_status_task(void) {
   board_error_pattern_tick(&green, now);
   gpio_put(BOARD_STATUS_LED, green.on);
   for (unsigned i = 0; i < BOARD_ARC_COUNT; ++i)
-    gpio_put(yellow_pins[i], arc[i] || ((now / 1000000u) & 1u));
+    gpio_put(yellow_pins[i], arc[i] ? arc_selected[i] :
+             !!((now / 1000000u) & 1u));
 }
 void board_status_latch_panic(void) {
   atomic_store(&fatal, true);

@@ -31,7 +31,18 @@ int main(void) {
 #endif
   advance(1000000); assert(pins[BOARD_ARC1_LED] && pins[25]);
   board_status_set_arc(0, true);
-  advance(1000000); assert(pins[BOARD_ARC1_LED] && pins[25]);
+  advance(1000000); assert(!pins[BOARD_ARC1_LED] && pins[25]);
+  advance(1000000); assert(!pins[BOARD_ARC1_LED]);
+  board_status_set_arc_selected(0, true);
+  board_status_task(); assert(pins[BOARD_ARC1_LED]);
+  board_status_set_arc_selected(0, false);
+  board_status_task(); assert(!pins[BOARD_ARC1_LED]);
+  board_status_set_arc(0, false);
+  board_status_task(); assert(pins[BOARD_ARC1_LED]);
+  board_status_set_arc_selected(0, true);
+  advance(1000000); assert(!pins[BOARD_ARC1_LED]);
+  board_status_set_arc(0, true);
+  board_status_task(); assert(pins[BOARD_ARC1_LED]);
 #if BOARD_ARC_COUNT > 1
   assert(!pins[BOARD_ARC2_LED]);
 #endif

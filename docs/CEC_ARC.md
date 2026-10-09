@@ -28,6 +28,7 @@ ARC，不是 eARC，也不解码或重新编码音频数据。
 | `BOARD_CEC_DEFAULT_VOLUME` | 20 | 20 | 默认目标音量 |
 | `BOARD_CEC_VOLUME_TOLERANCE` | 2 | 2 | 默认音量误差 |
 | `BOARD_CEC_VOLUME_RESET_DELAY_MS` | 30000 | 30000 | 全设备停止播放后的等待时间 |
+| `BOARD_HDMI_DETECT_DEBOUNCE_MS` | 100 | 100 | 每端口 5V Detect 插入确认时间 |
 
 CEC GPIO 为开漏方式：固件只主动拉低，发送高电平时切换为输入释放总线，且不启用
 内部上拉。必须使用外部 CEC 接口、上拉和电平保护，不能将 Pico GPIO 直接接到
@@ -42,8 +43,16 @@ CEC 位级状态机由 50 us 定时器驱动；帧解析、发送队列和业务
 `cec_arc_task()` 中处理。普通帧发送失败最多尝试 3 次。地址轮询帧不做帧级重发，
 而由状态机安排下一次轮询。
 
-HPD 为所有端口共用：任一路 HDMI Detect 为高时拉低 HPD；所有端口均断开时释放
-HPD。
+HPD 为 TV 侧“已经准备好接入 HDMI”的共用低有效许可。DDC/EDID 初始化完成后，
+`cec_arc_init()` 将 HPD 拉低并持续保持，不再由 `5V_DET` 改变。外部硬件必须分别用
+每个连接器自身的 HDMI 5V 对该公共许可做门控；因此只有该端口确实有 5V 输入时，
+对应连接器上的 HPD 才实际有效。
+
+两路 `5V_DET` 只控制各自端口的软件连接状态。高电平必须连续保持至少
+`BOARD_HDMI_DETECT_DEBOUNCE_MS`（默认 100 ms）才确认插入并启动该路 CEC；另一端口
+不会同时启动。检测由 50 us 定时回调连续采样，不依赖可能被音频、TF 或 UART 日志
+延迟的主循环；100 ms 内任一次采样为低都会取消本次插入确认。已连接后检测变低仍
+立即复位该路状态。
 
 ### 2.1 CEC 操作总流程
 
@@ -51,10 +60,12 @@ HPD。
 
 ```mermaid
 flowchart TD
-    BOOT([上电初始化]) --> DETECT{HDMI Detect<br/>是否为高？}
+    BOOT([初始化 DDC/EDID]) --> HPD[拉低公共 HPD<br/>表示 TV 侧已经准备好]
+    HPD --> DETECT{本端口 5V Detect<br/>是否连续为高 100 ms？}
     DETECT -- 否 --> IDLE[释放该端口 CEC<br/>关闭载波许可]
     IDLE --> DETECT
-    DETECT -- 是 --> POLLTV[轮询 TV 地址 0]
+    DETECT -- 是 --> PORTINIT[仅重置并启动本端口 CEC]
+    PORTINIT --> POLLTV[插入确认约 1 秒后<br/>轮询 TV 地址 0]
     POLLTV --> TVACK{地址 0 是否 ACK？}
     TVACK -- 是 --> CONFLICT[标记地址冲突<br/>禁止 ARC 输出]
     CONFLICT --> DETECT
@@ -137,10 +148,10 @@ flowchart TD
 
 ## 3. 连接、拔线和地址注册
 
-上电后每个端口默认希望开启 ARC，但只有该端口 HDMI 5V 存在且完成 CEC/ARC 协商
-后，才允许输出载波。
+上电后每个端口默认希望开启 ARC，但只有该端口 HDMI 5V 连续有效至少 100 ms，并且
+完成 CEC/ARC 协商后，才允许输出载波。
 
-初始化约 1 秒后轮询 TV 地址 `0`：
+每个端口确认插入并独立初始化后，约 1 秒再轮询 TV 地址 `0`：
 
 - 得到 ACK：已有 TV 占用地址 `0`，设置地址冲突并停止该端口注册和 ARC 输出；
 - 得到 NACK：注册为 TV 地址 `0`，广播 `0F:84:00:00:00`；

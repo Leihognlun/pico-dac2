@@ -24,8 +24,11 @@ GPIO 定义集中在 `boards/c1.h` 和 `boards/c2.h`，`src/board.h` 选择对�
 GPIO21 对应 I2C0 SCL，截图中的 `I2C2_SCL` 按 I2C0 处理。
 两路 DDC 均以地址 `0x50` 提供现有 EDID，分别保存读地址及事务状态。
 两路 CEC 分别维护 TV/ARC 协商、发送队列和音量键状态。
-任一路检测到 HDMI 5V，就拉低共用 HPD；两路均无 5V 时释放 HPD。
-每一路载波仍要求该路自己的 5V 检测与 CEC ARC 协商成功。
+DDC/EDID 初始化完成后，固件拉低并保持共用 HPD，表示 TV 侧已经准备好。外部硬件
+分别用各连接器自身的 HDMI 5V 对该信号做门控，所以只有相应端口有 5V 时，连接器
+上的 HPD 才实际有效。每路 5V 检测必须连续为高 100 ms 才确认插入，并只启动该路
+CEC 注册与 ARC 协商；另一路不会被提前启动。每一路载波仍要求该路自己的插入确认
+和 CEC ARC 协商成功。
 
 | 按钮 | Key（低有效） | LED+（高有效） | 功能 |
 | --- | --- | --- | --- |
@@ -46,7 +49,7 @@ C2 没有独立 LED- GPIO；C1 保留原有 LED- 低电平输出及四键行为�
 按任一播放键可重新选择输出。切换在 DMA 块边界更新载荷路由，旧端口继续发送保活帧；
 实际载波仍需对应端口自身的 ARC 链路许可，断开链路的端口保持低电平。
 B3/B4/B5 灯仅在选择播放时点亮；停止时这三个键不产生操作。
-CEC/HPD/DDC 链路维护独立于音频播放，黄色灯仍显示实际 ARC 链路状态。
+CEC/HPD/DDC 链路维护独立于音频播放，黄色灯结合 ARC 连接状态和本地播放选择显示。
 HDMI Detect 从连接变为断开时，该端口会清空 CEC 消息队列并重置地址注册、
 Soundbar 探测、ARC、System Audio、音量和冲突状态；重新插线后重新协商。
 
@@ -70,7 +73,8 @@ C2 按钮灯由固件管理，旧的主机 HID 灯写入
 C2 使用两组 PIO0 状态机和 DMA，启动时同步，音频编码缓冲只在两个 DMA 都完成后
 复用。未选中端口持续输出保活帧，保持当前采样率和声道状态；无待播缓冲时 DMA
 也会循环发送保活帧。显式停止/释放 SPDIF 或格式重建期间载波会中断。
-黄色灯按各自 ARC 链路独立显示：建立后常亮，未建立时亮一秒、灭一秒。
+黄色灯按各自端口独立显示：未连接时亮一秒、灭一秒；已连接但未选择播放时熄灭；
+已连接且按播放选择键选中该端口时常亮。停止或切走时熄灭，未连接时选择仍保持闪烁。
 绿色灯正常常亮，错误按错误码次数闪烁；TF/文件错误每轮亮灭各 4 次，轮间隔默认 2 秒。
 配置与错误码见 [LED_STATUS.md](LED_STATUS.md)。
 `PICODAC_CEC=OFF` 时省略链路许可检查，但仍需按键选择且只允许一路输出，黄色灯慢闪，音量键无 CEC 操作。
@@ -80,7 +84,7 @@ C2 使用两组 PIO0 状态机和 DMA，启动时同步，音频编码缓冲只�
 在已配置 Pico SDK、ARM 工具链与 Ninja 的终端运行：
 
 ```powershell
-cmake -S . -B build/dev-zero-c2-tf -G Ninja -DPICODAC_BOARD=c2 -DPICODAC_INPUT=SD_AUDIO -DPICODAC_SD_UART_LOG=OFF
+cmake -S . -B build/dev-zero-c2-tf -G Ninja -DPICODAC_BOARD=c2 -DPICODAC_INPUT=SD_AUDIO -DPICODAC_SD_UART_LOG=ON
 cmake --build build/dev-zero-c2-tf
 cmake -S . -B build/dev-zero-c2-usb -G Ninja -DPICODAC_BOARD=c2 -DPICODAC_INPUT=USB
 cmake --build build/dev-zero-c2-usb
@@ -92,3 +96,23 @@ cmake --build build/dev-zero-c2-usb
 `python tests/run_tests.py` 包含 C1 回归以及 C2 按键、HID、双 DDC、独立 CEC/HPD、
 双 DMA 缓冲所有权、单路静音/断开、压缩音频恢复与格式重启测试。
 这些主机测试和固件编译不能替代两台 Soundbar 同时连接时的电气、时序和听音实测。
+
+### 5V Detect / CEC 启动日志
+
+TF 构建可通过 UART0（TX GP0，115200 8N1）观察端口检测。配置
+`PICODAC_SD_UART_LOG=ON` 后，启动和插拔会输出：
+
+- 公共 HPD 已在 DDC 就绪后拉低；
+- ARC1/ARC2 的 `5V_DET` GPIO 和启动时原始电平；
+- 原始电平变高及 100 ms 去抖开始；
+- 100 ms 确认后只启动对应端口 CEC；
+- 去抖期间掉低或已连接端口拔线；
+- TV 地址、Audio System 地址轮询以及 ARC 控制报文入队。
+
+若 ARC1 未接 5V 却出现 `ARC1 ... HIGH` 或 `confirmed HIGH`，应优先检查 GP29 的外部
+电平、上下拉、两个 Detect 信号是否接反或串扰。只有出现 `confirmed HIGH` 后，该端口
+才允许开始 CEC 地址轮询。
+
+`5V_DET` 由 CEC 的 50 us 定时回调连续采样，而不是只由主循环间歇检查。例如高电平
+只保持 50 ms 后拉低，会输出 `debounce cancelled`，不会输出 `confirmed HIGH`，也不会
+启动该端口的 CEC 地址轮询。

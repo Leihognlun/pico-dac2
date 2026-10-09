@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "sd_controls.h"
+void board_status_set_arc_selected(unsigned p,bool selected){assert(p==0);(void)selected;}
 static bool pins[30];static uint32_t now;static unsigned volume_events,system_audio_events;static bool last_up,last_down;
 uint32_t time_us_32(void){return now;}void gpio_init(unsigned p){(void)p;}void gpio_set_dir(unsigned p,int d){(void)p;(void)d;}
 void gpio_pull_up(unsigned p){pins[p]=true;}void gpio_put(unsigned p,int v){pins[p]=v;}int gpio_get(unsigned p){return pins[p];}

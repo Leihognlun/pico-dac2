@@ -30,6 +30,7 @@ void board_error_pattern_set(board_error_pattern_t *pattern,
 void board_error_pattern_tick(board_error_pattern_t *pattern, uint32_t now);
 void board_status_init(void);
 void board_status_set_arc(unsigned port, bool enabled);
+void board_status_set_arc_selected(unsigned port, bool selected);
 void board_status_set_error(board_error_t error, bool active);
 void board_status_task(void);
 void board_status_latch_panic(void);

@@ -2,6 +2,7 @@
 #include "cec_tv.h"
 #include "spdif.h"
 #include "board_status.h"
+#include "log.h"
 #include "pico/stdlib.h"
 #include "hardware/sync.h"
 #include "hardware/irq.h"
@@ -12,9 +13,12 @@ typedef struct {
   cec_frame_t queue[8];
   unsigned head, tail, count, attempts;
   bool last_low, gate, present;
+  volatile bool detect_raw_high, detect_stable_high;
+  volatile uint8_t detect_events;
   bool reset_status_fresh;
   uint8_t reset_key;
   uint32_t volume_status_due;
+  volatile uint32_t detect_high_since;
 } arc_port_t;
 static arc_port_t ports[BOARD_ARC_COUNT];
 static unsigned playing_mask;
@@ -36,6 +40,10 @@ volatile uint32_t cec_arc_state, cec_address_conflict;
 
 #define VOLUME_MONITOR_US 5000000u
 #define VOLUME_RESET_POLL_US 500000u
+#define DETECT_EVENT_RISE       0x01u
+#define DETECT_EVENT_CANCEL     0x02u
+#define DETECT_EVENT_CONFIRMED  0x04u
+#define DETECT_EVENT_DISCONNECT 0x08u
 _Static_assert(BOARD_CEC_DEFAULT_VOLUME <= 100,
                "CEC default volume must be 0..100");
 _Static_assert(BOARD_CEC_VOLUME_TOLERANCE <= 100,
@@ -43,12 +51,33 @@ _Static_assert(BOARD_CEC_VOLUME_TOLERANCE <= 100,
 _Static_assert(BOARD_CEC_VOLUME_RESET_DELAY_MS >= 1000 &&
                BOARD_CEC_VOLUME_RESET_DELAY_MS <= 600000,
                "CEC volume reset delay must be 1000..600000 ms");
+_Static_assert(BOARD_HDMI_DETECT_DEBOUNCE_MS >= 100 &&
+               BOARD_HDMI_DETECT_DEBOUNCE_MS <= 5000,
+               "HDMI detect debounce must be 100..5000 ms");
 
 static bool tick(repeating_timer_t *t) {
   (void)t;
   uint32_t now = time_us_32();
   for (unsigned i = 0; i < BOARD_ARC_COUNT; ++i) {
     arc_port_t *p = &ports[i];
+    bool detect = gpio_get(detect_pins[i]);
+    if (detect) {
+      if (!p->detect_raw_high) {
+        p->detect_raw_high = true;
+        p->detect_high_since = now;
+        p->detect_events |= DETECT_EVENT_RISE;
+      } else if (!p->detect_stable_high &&
+                 (uint32_t)(now - p->detect_high_since) >=
+                     BOARD_HDMI_DETECT_DEBOUNCE_MS * 1000u) {
+        p->detect_stable_high = true;
+        p->detect_events |= DETECT_EVENT_CONFIRMED;
+      }
+    } else if (p->detect_raw_high || p->detect_stable_high) {
+      p->detect_events |= p->detect_stable_high ?
+          DETECT_EVENT_DISCONNECT : DETECT_EVENT_CANCEL;
+      p->detect_raw_high = false;
+      p->detect_stable_high = false;
+    }
     cec_wire_tick(&p->wire, gpio_get(cec_pins[i]), now);
     if (p->wire.low != p->last_low) {
       gpio_set_dir(cec_pins[i], p->wire.low ? GPIO_OUT : GPIO_IN);
@@ -63,9 +92,19 @@ static bool enqueue(void *ctx, const cec_frame_t *f) {
   p->queue[p->head] = *f;
   p->head = (p->head + 1) % 8;
   ++p->count;
+  if (f->tag == CEC_TAG_POLL_TV) {
+    LOG_INFO("CEC ARC%u queue: poll TV address 0", (unsigned)(p - ports) + 1);
+  } else if (f->tag == CEC_TAG_POLL_AUDIO) {
+    LOG_INFO("CEC ARC%u queue: poll Audio System address 5",
+             (unsigned)(p - ports) + 1);
+  } else if (f->len >= 2 &&
+             (f->data[1] == 0x70 || (f->data[1] >= 0xc0 && f->data[1] <= 0xc5))) {
+    LOG_INFO("CEC ARC%u queue: dst=%X opcode=%02X", (unsigned)(p - ports) + 1,
+             f->data[0] & 15u, f->data[1]);
+  }
   return true;
 }
-static void disconnect_port(unsigned port, uint32_t now) {
+static void reset_port(unsigned port, uint32_t now) {
   arc_port_t *p = &ports[port];
   uint32_t irq = save_and_disable_interrupts();
   cec_wire_init(&p->wire, now);
@@ -91,17 +130,30 @@ void cec_arc_init(void) {
   playing_mask = 0;
   inactive_since = time_us_32();
   spdif_set_link_enabled(false);
-  gpio_init(BOARD_HPD); gpio_put(BOARD_HPD, true);
+  // DDC is initialized before this function.  A low HPD therefore advertises
+  // that the TV side is ready; external hardware gates each connector's HPD
+  // with that connector's own 5V detect signal.
+  gpio_init(BOARD_HPD); gpio_put(BOARD_HPD, false);
   gpio_set_dir(BOARD_HPD, GPIO_OUT);
+  LOG_INFO("CEC HPD GP%u=LOW: TV/DDC ready; connector HPD is hardware 5V-gated",
+           BOARD_HPD);
   for (unsigned i = 0; i < BOARD_ARC_COUNT; ++i) {
     gpio_init(cec_pins[i]); gpio_put(cec_pins[i], false);
     gpio_set_dir(cec_pins[i], GPIO_IN); gpio_disable_pulls(cec_pins[i]);
     gpio_init(detect_pins[i]); gpio_set_dir(detect_pins[i], GPIO_IN);
     gpio_disable_pulls(detect_pins[i]);
     board_status_set_arc(i, false);
+    ports[i].present = false;
+    ports[i].detect_raw_high = false;
+    ports[i].detect_stable_high = false;
+    ports[i].detect_events = 0;
+    ports[i].detect_high_since = 0;
     cec_wire_init(&ports[i].wire, time_us_32());
     cec_tv_init(&ports[i].tv, enqueue, &ports[i], time_us_32());
     ports[i].volume_status_due = time_us_32();
+    LOG_INFO("CEC ARC%u init: 5V_DET=GP%u raw=%u CEC=GP%u debounce=%u ms",
+             i + 1, detect_pins[i], gpio_get(detect_pins[i]) ? 1u : 0u,
+             cec_pins[i], BOARD_HDMI_DETECT_DEBOUNCE_MS);
   }
   if (!add_repeating_timer_us(-50, tick, NULL, &timer)) panic("CEC timer unavailable");
 }
@@ -230,21 +282,53 @@ static void port_task(unsigned i, uint32_t now, bool present) {
     cec_wire_send(wire, &p->queue[p->tail], now);
   restore_interrupts(irq);
 }
+static bool update_port_presence(unsigned i, uint32_t now) {
+  arc_port_t *p = &ports[i];
+  uint32_t irq = save_and_disable_interrupts();
+  unsigned events = p->detect_events;
+  p->detect_events = 0;
+  bool stable = p->detect_stable_high;
+  restore_interrupts(irq);
+
+  if (events & DETECT_EVENT_RISE)
+    LOG_INFO("CEC ARC%u 5V_DET GP%u HIGH at %lu ms: start %u ms debounce",
+             i + 1, detect_pins[i], (unsigned long)(now / 1000u),
+             BOARD_HDMI_DETECT_DEBOUNCE_MS);
+  if (events & DETECT_EVENT_CANCEL)
+    LOG_INFO("CEC ARC%u 5V_DET GP%u LOW at %lu ms: debounce cancelled",
+             i + 1, detect_pins[i], (unsigned long)(now / 1000u));
+  if (events & DETECT_EVENT_CONFIRMED)
+    LOG_INFO("CEC ARC%u 5V_DET confirmed HIGH at %lu ms",
+             i + 1, (unsigned long)(now / 1000u));
+  if (events & DETECT_EVENT_DISCONNECT)
+    LOG_INFO("CEC ARC%u 5V_DET GP%u LOW at %lu ms: disconnect/reset",
+             i + 1, detect_pins[i], (unsigned long)(now / 1000u));
+
+  if (!stable) {
+    if (p->present) {
+      p->present = false;
+      reset_port(i, now);
+    }
+    return false;
+  }
+  if (!p->present) {
+    p->present = true;
+    LOG_INFO("CEC ARC%u start only ARC%u CEC after continuous detect",
+             i + 1, i + 1);
+    reset_port(i, now);
+  }
+  return true;
+}
 void cec_arc_task(void) {
   uint32_t now = time_us_32();
-  bool any_present = false;
   bool any_conflict = false;
   cec_rx_errors = 0;
   for (unsigned i = 0; i < BOARD_ARC_COUNT; ++i) {
-    bool present = gpio_get(detect_pins[i]);
-    if (ports[i].present && !present) disconnect_port(i, now);
-    ports[i].present = present;
-    any_present |= present;
-    port_task(i, now, present);
+    bool present = update_port_presence(i, now);
+    if (present) port_task(i, now, true);
     any_conflict |= ports[i].tv.conflict;
     cec_rx_errors += ports[i].wire.rx_errors + ports[i].wire.rx_drops;
   }
-  gpio_put(BOARD_HPD, !any_present);
   board_status_set_error(BOARD_ERROR_CEC_CONFLICT, any_conflict);
   cec_arc_state = ports[0].tv.arc;
   cec_address_conflict = ports[0].tv.conflict;

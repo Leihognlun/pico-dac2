@@ -59,9 +59,15 @@ files. Their FAT directory order is the playback/next-track order;
 ## Buttons and LEDs
 
 The yellow ARC LED on GPIO15 blinks one second on / one second off while ARC
-is not enabled, and stays on when its CEC ARC link is enabled and HDMI 5V is
-detected. B1 stop/play does not change this indicator. With CEC disabled,
+is not enabled. With an established link it is on only while the port is
+selected for playback; stopping playback turns it off. With CEC disabled,
 ARC cannot be confirmed and the yellow LED continues blinking.
+
+After DDC/EDID initialization, firmware drives the active-low HPD permission
+low and keeps it there. External hardware gates connector HPD with that
+connector's own HDMI 5V. The port is considered inserted only after its 5V
+detect input has remained high for 100 ms; CEC registration starts from that
+confirmed insertion.
 The green LED on GPIO25 is normally on; errors produce counted ON/OFF patterns.
 TF/file errors use four ON/OFF pairs (8 states), with a configurable 2-second
 gap between rounds. See [LED_STATUS.md](LED_STATUS.md) for all error codes.

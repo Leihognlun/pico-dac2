@@ -27,9 +27,9 @@ flowchart TB
     DMA --> ARC[GPIO16 → 外部 ARC TX 电路]
     VOL --> CEC[CEC 状态机 / GPIO19]
     CEC -.->|链路许可| DMA
-    DET[GPIO17：HDMI 5V 检测] --> CEC
-    DET --> HPD[GPIO18：低有效 HPD]
+    DET[GPIO17：HDMI 5V 检测<br/>连续高 100 ms] --> CEC
     EDID[256 字节只读 EDID] --> DDC[I2C1 / GPIO6、7 / 地址 0x50]
+    DDC --> HPD[GPIO18：低有效 HPD<br/>DDC 就绪后保持拉低]
 ```
 
 没有 FreeRTOS，使用主循环、中断、PIO/DMA；只有 TF 模式启动 Core1。
@@ -61,10 +61,10 @@ I2S 历史源码仍在仓库，但目标不编译 I2S/BOTH，固定
 | DDC SDA / SCL | 6 / 7，均属于 I2C1 | 地址 0x50，关闭内部上拉 |
 | SPDIF / ARC TX | 16，PIO0 | 固定输出引脚，动态申请状态机 |
 | HDMI 5V Detect | 17，输入 | 高电平表示检测到 HDMI 5V，经外部电路转换电平 |
-| HDMI HPD | 18，低有效输出 | 初始化为高，任务中输出 `!hdmi_present` |
+| HDMI HPD | 18，低有效输出 | DDC 初始化后拉低并保持；连接器侧由外部电路按本端口 5V 门控 |
 | HDMI CEC | 19，开漏式收发 | 拉低或切为输入释放，无内部上拉 |
 | LED_Green | 25，高有效，GPIO | 正常常亮；错误按次数闪烁，见 LED_STATUS.md |
-| LED_Yellow（C1） | 15，高有效，GPIO | ARC 未建立时亮 1 秒、灭 1 秒，建立后常亮 |
+| LED_Yellow（C1） | 15，高有效，GPIO | ARC 未建立时闪烁；已连接且选择播放时常亮，否则熄灭 |
 | B1 Key / LED+ / LED− | 10 / 9 / 11 | TF 播放/停止 |
 | B2 Key / LED+ / LED− | 13 / 12 / 14 | TF 下一首 |
 | B3 Key / LED+ / LED− | 21 / 20 / 22 | CEC 音量加 |
@@ -163,7 +163,7 @@ SPDIF 后发布 `switch_ack`；Core1 收到确认后才清空队列、打开下�
 ## 5. 四键、LED 与停止行为
 
 ARC 状态统一使用黄色 LED：C1 GPIO15，C2 ARC1/ARC2 GPIO17/16。
-未建立链路时亮 1 秒、灭 1 秒；CEC 握手完成且 HDMI 5V 存在后常亮。
+未建立链路时亮 1 秒、灭 1 秒；已连接但未选择播放时熄灭；已连接且端口被选择播放时常亮。
 GPIO25 绿色 LED 正常常亮；TF 读取或音频文件错误每轮亮灭各 4 次，
 轮间隔默认 2 秒且可配置。普通 EOF 和播放停止不报错。
 完整错误次数与配置见 [LED_STATUS.md](LED_STATUS.md)。
@@ -262,7 +262,8 @@ sequenceDiagram
 音量消息为 05 44 41 / 05 44 42，释放为 05 45。
 Soundbar 终止 ARC、Standby、系统音频关闭或拒绝请求仍可关闭链路，B1 不覆盖这些事件。
 
-GPIO17 变低时 HPD 输出高、载波许可关闭；变高时 HPD 输出低。
+GPIO17 连续变高 100 ms 后才确认该端口插入，并从该时刻开始该路 CEC 注册；不会启动
+其他端口。GPIO17 变低时立即关闭该端口载波许可，但公共 HPD 继续保持低电平。
 5V 从有到无时会清空该端口 CEC 队列，并重置地址注册、Soundbar 探测、ARC、
 System Audio、音量和地址冲突状态；重新插线后从地址注册开始重新协商。
 CEC=OFF 时相关初始化与任务为空，音频许可接口返回 true，也不配置 HPD/5V 检测。
