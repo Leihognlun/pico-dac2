@@ -92,14 +92,14 @@ static bool enqueue(void *ctx, const cec_frame_t *f) {
   p->queue[p->head] = *f;
   p->head = (p->head + 1) % 8;
   ++p->count;
+  unsigned port = (unsigned)(p - ports);
   if (f->tag == CEC_TAG_POLL_TV) {
-    LOG_INFO("CEC ARC%u queue: poll TV address 0", (unsigned)(p - ports) + 1);
+    LOG_INFO("CEC ARC%u queue: poll TV address 0", port + 1);
   } else if (f->tag == CEC_TAG_POLL_AUDIO) {
-    LOG_INFO("CEC ARC%u queue: poll Audio System address 5",
-             (unsigned)(p - ports) + 1);
+    LOG_INFO("CEC ARC%u queue: poll Audio System address 5", port + 1);
   } else if (f->len >= 2 &&
              (f->data[1] == 0x70 || (f->data[1] >= 0xc0 && f->data[1] <= 0xc5))) {
-    LOG_INFO("CEC ARC%u queue: dst=%X opcode=%02X", (unsigned)(p - ports) + 1,
+    LOG_INFO("CEC ARC%u queue: dst=%X opcode=%02X", port + 1,
              f->data[0] & 15u, f->data[1]);
   }
   return true;
