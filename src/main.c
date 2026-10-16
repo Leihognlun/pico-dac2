@@ -11,6 +11,15 @@
 #include "hardware/clocks.h"
 #include "log.h"
 #include "pico/stdlib.h"
+#if PICODAC_BOOT_TRACE
+#include "hardware/uart.h"
+// Direct UART bypasses stdio and logs before clock/DDC/CEC initialization.
+static void boot_trace(const char *message) {
+  uart_puts(uart0, message);
+  uart_tx_wait_blocking(uart0);
+  sleep_ms(1000);
+}
+#endif
 #include "usb.h"
 #include "usb_audio.h"
 #include "usb_hid.h"
@@ -19,6 +28,14 @@
 #endif
 
 int main() {
+#if PICODAC_BOOT_TRACE
+  uart_init(uart0, 115200);
+  gpio_set_function(BOARD_UART_TX, GPIO_FUNC_UART);
+  gpio_set_function(BOARD_UART_RX, GPIO_FUNC_UART);
+  uart_set_hw_flow(uart0, false, false);
+  boot_trace("\r\nBOOT direct-v2: main entered, before clock switch\r\n");
+  boot_trace("BOOT direct-v2: switching clock next\r\n");
+#endif
 #if PICODAC_INPUT_SD
   // 120 MHz / 192 kHz = 625 divider units: exact average carrier frequency.
   // A local file has no USB feedback loop to compensate clock-rate error.
@@ -30,10 +47,34 @@ int main() {
 #endif
 
   stdio_init_all();
+#if PICODAC_BOOT_TRACE
+  boot_trace("BOOT direct-v2: clock and stdio ready\r\n");
+#endif
+  LOG_INFO("BOOT uart-trace-v1 board=C%u input=%s sys_hz=%lu UART TX=GP%u RX=GP%u",
+           PICODAC_BOARD_C2 ? 2u : 1u,
+#if PICODAC_INPUT_SD
+           "TF",
+#else
+           "USB",
+#endif
+           (unsigned long)clock_get_hz(clk_sys),
+           (unsigned)BOARD_UART_TX, (unsigned)BOARD_UART_RX);
 
   board_status_init();
+#if PICODAC_BOOT_TRACE
+  boot_trace("BOOT direct-v2: status ready, DDC next\r\n");
+#endif
+  LOG_INFO("BOOT status ready; initializing DDC");
   ddc_edid_init();
+#if PICODAC_BOOT_TRACE
+  boot_trace("BOOT direct-v2: DDC ready, CEC next\r\n");
+#endif
+  LOG_INFO("BOOT DDC ready; initializing CEC");
   cec_arc_init();
+#if PICODAC_BOOT_TRACE
+  boot_trace("BOOT direct-v2: CEC ready, application next\r\n");
+#endif
+  LOG_INFO("BOOT CEC ready");
 #if PICODAC_INPUT_SD
   sd_eac3_player_run();
 #else

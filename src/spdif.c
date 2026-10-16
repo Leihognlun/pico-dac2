@@ -6,7 +6,11 @@
 #include "hardware/irq.h"
 #include "hardware/sync.h"
 #include "pico/stdlib.h"
+#if PICODAC_SPDIF_OPEN_DRAIN
+#include "spdif_open_drain.pio.h"
+#else
 #include "spdif.pio.h"
+#endif
 #include "spdif_encode.h"
 #include "audio_block_queue.h"
 #if PICODAC_OUTPUT_BOTH
@@ -87,6 +91,11 @@ void spdif_init(unsigned pin, uint32_t sample_rate, uint8_t bit_depth,
   sm = pio_claim_unused_sm(SPDIF_PIO, true);
   offset = pio_add_program(SPDIF_PIO, &picodac_spdif_program);
   pio_gpio_init(SPDIF_PIO, pin);
+  gpio_set_slew_rate(pin, GPIO_SLEW_RATE_FAST);
+  gpio_set_drive_strength(pin, PICODAC_SPDIF_DRIVE_STRENGTH);
+#if PICODAC_SPDIF_OPEN_DRAIN
+  gpio_disable_pulls(pin);
+#endif
   pio_sm_config config = picodac_spdif_program_get_default_config(offset);
   sm_config_set_sideset_pins(&config, pin);
   sm_config_set_out_shift(&config, true, true, 32);
@@ -96,8 +105,8 @@ void spdif_init(unsigned pin, uint32_t sample_rate, uint8_t bit_depth,
   assert(divider >= 256 && divider < 0x1000000);
   sm_config_set_clkdiv_int_frac(&config, divider >> 8, divider & 255);
   pio_sm_init(SPDIF_PIO, sm, offset, &config);
-  pio_sm_set_consecutive_pindirs(SPDIF_PIO, sm, pin, 1, true);
   pio_sm_set_pins_with_mask(SPDIF_PIO, sm, 0, 1u << pin);
+  pio_sm_set_consecutive_pindirs(SPDIF_PIO, sm, pin, 1, true);
 
   dma_channel = dma_claim_unused_channel(true);
   dma_channel_config dc = dma_channel_get_default_config(dma_channel);
@@ -198,6 +207,10 @@ void spdif_stop(void) {
   pio_sm_clkdiv_restart(SPDIF_PIO, sm);
   pio_sm_exec(SPDIF_PIO, sm, pio_encode_jmp(offset));
   pio_sm_set_pins_with_mask(SPDIF_PIO, sm, 0, 1u << output_pin);
+#if PICODAC_SPDIF_OPEN_DRAIN
+  // The forced JMP has side 0 (release); restore the stopped low level.
+  pio_sm_set_consecutive_pindirs(SPDIF_PIO, sm, output_pin, 1, true);
+#endif
   audio_block_queue_reset(&blocks, OUTPUT_CONSUMERS);
   running = false;
 }

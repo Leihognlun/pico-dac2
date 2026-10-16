@@ -8,12 +8,15 @@ typedef struct { uint32_t fdebug, txf[4]; } fake_pio_t;
 typedef fake_pio_t *PIO;
 extern fake_pio_t fake_pio;
 #define pio0 (&fake_pio)
-typedef struct { unsigned dummy; } pio_sm_config;
+typedef struct { bool sideset_pindirs; } pio_sm_config;
 typedef struct { unsigned channel; } dma_channel_config;
 extern unsigned fake_sm_count, fake_dma_count, fake_enabled_mask;
 extern bool fake_pending[2];
 extern const void *fake_dma_read[2];
 extern unsigned fake_function[30];
+extern bool fake_pin_high[30], fake_pin_output[30], fake_pulls_disabled[30];
+extern bool fake_sideset_pindirs[4];
+extern unsigned fake_drive_strength[30];
 #define __isr
 #define __time_critical_func(name) name
 #define PIO_FDEBUG_TXSTALL_LSB 0
@@ -23,6 +26,11 @@ extern unsigned fake_function[30];
 #define PICO_HIGHEST_IRQ_PRIORITY 0
 #define GPIO_OUT 1
 #define GPIO_FUNC_SIO 5
+#define GPIO_SLEW_RATE_FAST 1
+#define GPIO_DRIVE_STRENGTH_2MA 0
+#define GPIO_DRIVE_STRENGTH_4MA 1
+#define GPIO_DRIVE_STRENGTH_8MA 2
+#define GPIO_DRIVE_STRENGTH_12MA 3
 #define clk_sys 0
 #define DMA_IRQ_NUM(n) (n)
 static inline uint32_t save_and_disable_interrupts(void) { return 0; }
@@ -30,8 +38,16 @@ static inline void restore_interrupts(uint32_t n) { (void)n; }
 static inline void __mem_fence_release(void) {}
 static inline uint32_t clock_get_hz(unsigned c) { (void)c; return 120000000; }
 static inline void gpio_init(unsigned p) { fake_function[p] = GPIO_FUNC_SIO; }
-static inline void gpio_put(unsigned p, bool v) { (void)p; (void)v; }
-static inline void gpio_set_dir(unsigned p, bool v) { (void)p; (void)v; }
+static inline void gpio_set_slew_rate(unsigned p, unsigned rate) {
+  assert(p < 30 && rate == GPIO_SLEW_RATE_FAST);
+}
+static inline void gpio_set_drive_strength(unsigned p, unsigned strength) {
+  assert(p < 30);
+  fake_drive_strength[p] = strength;
+}
+static inline void gpio_put(unsigned p, bool v) { fake_pin_high[p] = v; }
+static inline void gpio_disable_pulls(unsigned p) { fake_pulls_disabled[p] = true; }
+static inline void gpio_set_dir(unsigned p, bool v) { fake_pin_output[p] = v; }
 static inline void gpio_set_function(unsigned p, unsigned f) { fake_function[p] = f; }
 static inline void pio_gpio_init(PIO p, unsigned pin) {
   (void)p;
@@ -45,9 +61,15 @@ static inline void sm_config_set_sideset_pins(pio_sm_config *c, unsigned p) { (v
 static inline void sm_config_set_out_shift(pio_sm_config *c, bool a, bool b, unsigned n) { (void)c; (void)a; (void)b; (void)n; }
 static inline void sm_config_set_fifo_join(pio_sm_config *c, unsigned n) { (void)c; (void)n; }
 static inline void sm_config_set_clkdiv_int_frac(pio_sm_config *c, unsigned a, unsigned b) { (void)c; (void)a; (void)b; }
-static inline void pio_sm_init(PIO p, unsigned s, unsigned o, const pio_sm_config *c) { (void)p; (void)s; (void)o; (void)c; }
+static inline void pio_sm_init(PIO p, unsigned s, unsigned o, const pio_sm_config *c) {
+  (void)p; (void)o; fake_sideset_pindirs[s] = c->sideset_pindirs;
+}
 static inline void pio_sm_set_consecutive_pindirs(PIO p, unsigned s, unsigned pin, unsigned n, bool d) { (void)p; (void)s; (void)pin; (void)n; (void)d; }
-static inline void pio_sm_set_pins_with_mask(PIO p, unsigned s, unsigned v, unsigned m) { (void)p; (void)s; (void)v; (void)m; }
+static inline void pio_sm_set_pins_with_mask(PIO p, unsigned s, unsigned v, unsigned m) {
+  (void)p; (void)s;
+  for (unsigned pin = 0; pin < 30; ++pin)
+    if (m & (1u << pin)) fake_pin_high[pin] = (v & (1u << pin)) != 0;
+}
 static inline unsigned pio_get_dreq(PIO p, unsigned s, bool b) { (void)p; (void)b; return s; }
 static inline bool pio_sm_is_tx_fifo_full(PIO p, unsigned s) { (void)p; (void)s; return true; }
 static inline void pio_enable_sm_mask_in_sync(PIO p, unsigned m) { (void)p; fake_enabled_mask = m; }

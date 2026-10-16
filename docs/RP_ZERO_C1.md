@@ -7,6 +7,15 @@ The C1 configuration has one audio output only:
 SPDIF on GPIO16, converted by the board circuit to HDMI ARC TX. I2S and the
 dual-output build mode are not part of this target.
 
+SPDIF GPIO16 uses fast slew rate and configurable drive strength:
+`PICODAC_SPDIF_DRIVE_MA=2/4/8/12`, default 2 mA.
+The 2 mA push-pull TF firmware is stored in `build/c1-tf`
+and uses `-DPICODAC_SPDIF_OPEN_DRAIN=OFF -DPICODAC_SPDIF_DRIVE_MA=2`.
+The earlier 8 mA open-drain TF build uses
+`-DPICODAC_SPDIF_OPEN_DRAIN=ON -DPICODAC_SPDIF_DRIVE_MA=8` and is stored in
+`build/dev-zero-c1-tf-open-drain-8ma`. In open-drain mode the setting controls
+the low driver; an external pull-up supplies the high level.
+
 CEC polls the Soundbar volume. After the device has no playing output for
 `BOARD_CEC_VOLUME_RESET_DELAY_MS`, it steps the volume into
 `BOARD_CEC_DEFAULT_VOLUME +/- BOARD_CEC_VOLUME_TOLERANCE`. The defaults in
@@ -77,7 +86,14 @@ gap between rounds. See [LED_STATUS.md](LED_STATUS.md) for all error codes.
 - B3/B4 send CEC volume-up/volume-down press and release events while playing.
 - B2, B3 and B4 are ignored while stopped; their LEDs are on only while playing.
 
-Stopping does not disable HPD, CEC, ARC, or the SPDIF transmitter. The current
-track position is retained and silent SPDIF blocks are sent continuously, so
-the attached Soundbar does not see the ARC link disappear or immediately enter
-standby.
+Starting playback with B1 permits the GPIO16 audio stream even without a
+connected receiver or completed ARC handshake. Unplugging or ARC termination
+does not interrupt this manually started stream. The yellow ARC LED still
+blinks while disconnected; CEC/DDC/HPD continue their normal maintenance.
+The existing C1 boot playback selection still waits for ARC. If it is waiting
+without an ARC connection, the first B1 press starts the stream directly;
+the next press stops it.
+
+Stopping revokes manual output permission. With a real ARC connection,
+silent SPDIF blocks continue to keep the receiver active. Without ARC,
+the output stops. HPD, CEC and DDC remain active.

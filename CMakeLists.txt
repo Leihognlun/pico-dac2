@@ -23,6 +23,7 @@ set(PICODAC_SD_SPI_HZ 24000000 CACHE STRING "TF SPI transfer clock")
 set(PICODAC_SD_FILE "0:/TRACK.WAV" CACHE STRING "WAV, AC3, or E-AC-3 file on TF")
 option(PICODAC_SD_DIAGNOSTICS "Nonblocking UART0 SD playback diagnostics" ON)
 option(PICODAC_SD_UART_LOG "Enable UART log output in SD mode" ON)
+option(PICODAC_BOOT_TRACE "Early direct UART boot trace with startup delays (diagnostic only)" OFF)
 option(PICODAC_SD_BENCHMARK "Benchmark read-only TF/SPI throughput before playback" OFF)
 set(PICODAC_ERROR_LED_GAP_MS 2000 CACHE STRING "Dark interval between error LED rounds (ms)")
 set(PICODAC_ERROR_LED_STEP_MS 250 CACHE STRING "Duration of each error LED ON/OFF phase (ms)")
@@ -36,6 +37,12 @@ endforeach()
 # user configurations
 option(PICODAC_CEC "TV CEC / ARC control" ON)
 option(PICODAC_DDC "Read-only EDID on each board DDC bus" ${PICODAC_CEC})
+option(PICODAC_SPDIF_OPEN_DRAIN "SPDIF drives low or releases GPIO (external pull-up required)" OFF)
+set(PICODAC_SPDIF_DRIVE_MA 2 CACHE STRING "SPDIF GPIO drive strength in mA")
+set_property(CACHE PICODAC_SPDIF_DRIVE_MA PROPERTY STRINGS 2 4 8 12)
+if(NOT PICODAC_SPDIF_DRIVE_MA MATCHES "^(2|4|8|12)$")
+    message(FATAL_ERROR "PICODAC_SPDIF_DRIVE_MA must be 2, 4, 8, or 12")
+endif()
 set(PICODAC_OUTPUT "SPDIF")
 if(NOT PICODAC_SPDIF_PIN MATCHES "^[0-9]+$" OR PICODAC_SPDIF_PIN GREATER 29)
     message(FATAL_ERROR "PICODAC_SPDIF_PIN must be an RP2040 GPIO number (0..29)")
@@ -106,6 +113,7 @@ endif()
         src/board_panic.c
     )
     target_compile_definitions(mdac_adc2 PRIVATE
+        PICODAC_BOOT_TRACE=$<BOOL:${PICODAC_BOOT_TRACE}>
         PICODAC_ERROR_LED_GAP_MS=${PICODAC_ERROR_LED_GAP_MS}
         PICODAC_ERROR_LED_STEP_MS=${PICODAC_ERROR_LED_STEP_MS}
         PICO_PANIC_FUNCTION=board_panic PICO_PANIC_FUNCTION_DOES_NOT_RETURN=1
@@ -122,7 +130,7 @@ endif()
         target_link_libraries(mdac_adc2 pico_i2c_slave hardware_i2c)
     endif()
     if(PICODAC_CEC)
-        target_sources(mdac_adc2 PRIVATE src/cec_wire.c src/cec_tv.c src/cec_arc.c)
+        target_sources(mdac_adc2 PRIVATE src/cec_wire.c src/cec_tv.c src/cec_arc.c src/cec_sad.c)
         target_compile_definitions(mdac_adc2 PRIVATE PICODAC_CEC_PIN=${PICODAC_CEC_PIN})
     endif()
     if(PICODAC_INPUT STREQUAL "SD_AUDIO")
@@ -168,7 +176,14 @@ endif()
     endif()
     target_sources(mdac_adc2 PRIVATE src/spdif_encode.c)
     target_compile_definitions(mdac_adc2 PRIVATE PICODAC_OUTPUT_SPDIF=1 PICODAC_OUTPUT_BOTH=0)
-    pico_generate_pio_header(mdac_adc2 ${PICODAC_SRC_DIR}/spdif.pio)
+    target_compile_definitions(mdac_adc2 PRIVATE
+        PICODAC_SPDIF_DRIVE_STRENGTH=GPIO_DRIVE_STRENGTH_${PICODAC_SPDIF_DRIVE_MA}MA
+        PICODAC_SPDIF_OPEN_DRAIN=$<BOOL:${PICODAC_SPDIF_OPEN_DRAIN}>)
+    if(PICODAC_SPDIF_OPEN_DRAIN)
+        pico_generate_pio_header(mdac_adc2 ${PICODAC_SRC_DIR}/spdif_open_drain.pio)
+    else()
+        pico_generate_pio_header(mdac_adc2 ${PICODAC_SRC_DIR}/spdif.pio)
+    endif()
     # Add the standard library to the build
     target_link_libraries(mdac_adc2
         hardware_dma

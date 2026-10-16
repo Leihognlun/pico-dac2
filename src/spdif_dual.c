@@ -2,7 +2,11 @@
 #include "board.h"
 #include "spdif_encode.h"
 #include "audio_block_queue.h"
+#if PICODAC_SPDIF_OPEN_DRAIN
+#include "spdif_open_drain.pio.h"
+#else
 #include "spdif.pio.h"
+#endif
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
@@ -73,14 +77,19 @@ void spdif_init(unsigned pin, uint32_t sample_rate, uint8_t bit_depth, bool comp
   for (unsigned i = 0; i < 2; ++i) {
     sm[i] = pio_claim_unused_sm(SPDIF_PIO, true);
     gpio_init(pins[i]);
+    gpio_set_slew_rate(pins[i], GPIO_SLEW_RATE_FAST);
+    gpio_set_drive_strength(pins[i], PICODAC_SPDIF_DRIVE_STRENGTH);
+#if PICODAC_SPDIF_OPEN_DRAIN
+    gpio_disable_pulls(pins[i]);
+#endif
     pio_sm_config config = picodac_spdif_program_get_default_config(offset);
     sm_config_set_sideset_pins(&config, pins[i]);
     sm_config_set_out_shift(&config, true, true, 32);
     sm_config_set_fifo_join(&config, PIO_FIFO_JOIN_TX);
     sm_config_set_clkdiv_int_frac(&config, divider >> 8, divider & 255);
     pio_sm_init(SPDIF_PIO, sm[i], offset, &config);
-    pio_sm_set_consecutive_pindirs(SPDIF_PIO, sm[i], pins[i], 1, true);
     pio_sm_set_pins_with_mask(SPDIF_PIO, sm[i], 0, 1u << pins[i]);
+    pio_sm_set_consecutive_pindirs(SPDIF_PIO, sm[i], pins[i], 1, true);
     dma[i] = dma_claim_unused_channel(true);
     dma_channel_config dc = dma_channel_get_default_config(dma[i]);
     channel_config_set_transfer_data_size(&dc, DMA_SIZE_32);

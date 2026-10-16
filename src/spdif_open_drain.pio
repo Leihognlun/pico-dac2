@@ -1,0 +1,17 @@
+;
+; Copyright (c) 2020 Raspberry Pi (Trading) Ltd.
+; SPDX-License-Identifier: BSD-3-Clause
+;
+; Open-drain variant of spdif.pio. The output latch stays zero.
+; side 1 enables the low driver; side 0 releases the pin to an external pull-up.
+; Each NRZI transition bit takes two cycles; a stereo frame takes 256.
+.program picodac_spdif
+.side_set 1 pindirs
+.wrap_target
+public output_low:
+    out x, 1            side 1
+    jmp !x, output_low  side 1
+output_high:
+    out x, 1            side 0
+    jmp !x, output_high side 0
+.wrap

@@ -4,6 +4,8 @@
 #if PICODAC_CEC
 void cec_arc_init(void);
 void cec_arc_task(void);
+// Output is allowed after ARC connects or a selected port is started manually.
+// Manual permission ends on stop; it does not imply ARC is connected.
 bool cec_arc_audio_allowed(void);
 void cec_arc_set_enabled(bool enabled);
 void cec_arc_request_playback(void);

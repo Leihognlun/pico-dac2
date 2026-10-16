@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include "board.h"
 
+#ifndef PICODAC_SPDIF_DRIVE_STRENGTH
+#define PICODAC_SPDIF_DRIVE_STRENGTH GPIO_DRIVE_STRENGTH_2MA
+#endif
+
 void spdif_init(unsigned pin, uint32_t sample_rate, uint8_t bit_depth,
                 bool non_pcm);
 void spdif_deinit(void);

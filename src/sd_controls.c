@@ -90,7 +90,13 @@ void sd_controls_task(void) {
     unsigned mask = atomic_load_explicit(&playing_mask, memory_order_acquire);
     if (i < BOARD_ARC_COUNT && down) {
       unsigned previous = mask;
-      mask = (mask & bit) ? 0u : bit;
+      bool waiting_for_arc = false;
+#if BOARD_ARC_COUNT == 1 && PICODAC_CEC
+      // C1 boots selected but may still be waiting for ARC. Its first press
+      // should start the offline stream, rather than just stopping that wait.
+      waiting_for_arc = (mask & bit) && !cec_arc_audio_allowed();
+#endif
+      mask = (mask & bit) && !waiting_for_arc ? 0u : bit;
       atomic_store_explicit(&playing_mask, mask, memory_order_release);
       for (unsigned port = 0; port < BOARD_ARC_COUNT; ++port)
         cec_arc_set_port_playing(port, !!(mask & (1u << port)));

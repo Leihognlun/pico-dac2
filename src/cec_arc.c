@@ -1,5 +1,6 @@
 #include "cec_arc.h"
 #include "cec_tv.h"
+#include "cec_sad.h"
 #include "spdif.h"
 #include "board_status.h"
 #include "log.h"
@@ -10,9 +11,10 @@
 typedef struct {
   cec_wire_t wire;
   cec_tv_t tv;
+  cec_sad_t sad;
   cec_frame_t queue[8];
   unsigned head, tail, count, attempts;
-  bool last_low, gate, present;
+  bool last_low, gate, present, output_enabled;
   volatile bool detect_raw_high, detect_stable_high;
   volatile uint8_t detect_events;
   bool reset_status_fresh;
@@ -22,6 +24,9 @@ typedef struct {
 } arc_port_t;
 static arc_port_t ports[BOARD_ARC_COUNT];
 static unsigned playing_mask;
+// A button-started stream may run without a receiver or an ARC handshake.
+// Keep this separate from gate, which reports the actual ARC connection.
+static unsigned manual_playback_mask;
 static uint32_t inactive_since;
 static const unsigned cec_pins[] = {BOARD_ARC1_CEC,
 #if BOARD_ARC_COUNT > 1
@@ -54,6 +59,21 @@ _Static_assert(BOARD_CEC_VOLUME_RESET_DELAY_MS >= 1000 &&
 _Static_assert(BOARD_HDMI_DETECT_DEBOUNCE_MS >= 100 &&
                BOARD_HDMI_DETECT_DEBOUNCE_MS <= 5000,
                "HDMI detect debounce must be 100..5000 ms");
+
+static bool port_output_allowed(unsigned port) {
+  return ports[port].gate ||
+      !!(manual_playback_mask & playing_mask & (1u << port));
+}
+static void update_output_gate(unsigned port) {
+  bool enabled = port_output_allowed(port);
+  if (enabled == ports[port].output_enabled) return;
+  ports[port].output_enabled = enabled;
+#if BOARD_ARC_COUNT > 1
+  spdif_set_port_link_enabled(port, enabled);
+#else
+  spdif_set_link_enabled(enabled);
+#endif
+}
 
 static bool tick(repeating_timer_t *t) {
   (void)t;
@@ -93,6 +113,8 @@ static bool enqueue(void *ctx, const cec_frame_t *f) {
   p->head = (p->head + 1) % 8;
   ++p->count;
   unsigned port = (unsigned)(p - ports);
+  if (f->len == 3 && f->data[1] == 0xa4)
+    LOG_INFO("CEC ARC%u SAD request: 05:A4:%02X", port + 1, f->data[2]);
   if (f->tag == CEC_TAG_POLL_TV) {
     LOG_INFO("CEC ARC%u queue: poll TV address 0", port + 1);
   } else if (f->tag == CEC_TAG_POLL_AUDIO) {
@@ -113,21 +135,17 @@ static void reset_port(unsigned port, uint32_t now) {
   restore_interrupts(irq);
   gpio_set_dir(cec_pins[port], GPIO_IN);
   cec_tv_init(&p->tv, enqueue, p, now);
+  cec_sad_init(&p->sad, port);
   p->reset_status_fresh = false;
   p->reset_key = 0;
   p->volume_status_due = now;
-  if (p->gate) {
-    p->gate = false;
-#if BOARD_ARC_COUNT > 1
-    spdif_set_port_link_enabled(port, false);
-#else
-    spdif_set_link_enabled(false);
-#endif
-  }
+  p->gate = false;
+  update_output_gate(port);
   board_status_set_arc(port, false);
 }
 void cec_arc_init(void) {
   playing_mask = 0;
+  manual_playback_mask = 0;
   inactive_since = time_us_32();
   spdif_set_link_enabled(false);
   // DDC is initialized before this function.  A low HPD therefore advertises
@@ -143,6 +161,8 @@ void cec_arc_init(void) {
     gpio_init(detect_pins[i]); gpio_set_dir(detect_pins[i], GPIO_IN);
     gpio_disable_pulls(detect_pins[i]);
     board_status_set_arc(i, false);
+    ports[i].gate = false;
+    ports[i].output_enabled = false;
     ports[i].present = false;
     ports[i].detect_raw_high = false;
     ports[i].detect_stable_high = false;
@@ -150,6 +170,7 @@ void cec_arc_init(void) {
     ports[i].detect_high_since = 0;
     cec_wire_init(&ports[i].wire, time_us_32());
     cec_tv_init(&ports[i].tv, enqueue, &ports[i], time_us_32());
+    cec_sad_init(&ports[i].sad, i);
     ports[i].volume_status_due = time_us_32();
     LOG_INFO("CEC ARC%u init: 5V_DET=GP%u raw=%u CEC=GP%u debounce=%u ms",
              i + 1, detect_pins[i], gpio_get(detect_pins[i]) ? 1u : 0u,
@@ -162,8 +183,13 @@ void cec_arc_set_enabled(bool enabled) {
     cec_tv_request_arc(&ports[i].tv, enabled, time_us_32());
 }
 void cec_arc_request_port_playback(unsigned port) {
-  if (port < BOARD_ARC_COUNT)
+  if (port < BOARD_ARC_COUNT) {
+    if (playing_mask & (1u << port)) {
+      manual_playback_mask |= 1u << port;
+      update_output_gate(port);
+    }
     cec_tv_request_playback(&ports[port].tv, time_us_32());
+  }
 }
 void cec_arc_request_playback(void) {
   for (unsigned i = 0; i < BOARD_ARC_COUNT; ++i) cec_arc_request_port_playback(i);
@@ -180,6 +206,8 @@ void cec_arc_set_port_playing(unsigned port, bool playing) {
   unsigned old_mask = playing_mask;
   unsigned bit = 1u << port;
   playing_mask = playing ? playing_mask | bit : playing_mask & ~bit;
+  if (!playing) manual_playback_mask &= ~bit;
+  update_output_gate(port);
   if (!!old_mask == !!playing_mask) return;
   uint32_t now = time_us_32();
   if (!playing_mask) inactive_since = now;
@@ -194,11 +222,11 @@ void cec_arc_set_port_playing(unsigned port, bool playing) {
   }
 }
 bool cec_arc_port_audio_allowed(unsigned port) {
-  return port < BOARD_ARC_COUNT && ports[port].gate;
+  return port < BOARD_ARC_COUNT && port_output_allowed(port);
 }
 bool cec_arc_audio_allowed(void) {
   for (unsigned i = 0; i < BOARD_ARC_COUNT; ++i)
-    if (ports[i].gate) return true;
+    if (port_output_allowed(i)) return true;
   return false;
 }
 static void volume_task(arc_port_t *p, uint32_t now, bool present) {
@@ -254,30 +282,36 @@ static void port_task(unsigned i, uint32_t now, bool present) {
       p->tail = (p->tail + 1) % 8; --p->count; p->attempts = 0;
       if (result == CEC_TX_OK) ++cec_tx_frames; else ++cec_tx_errors;
       cec_tv_tx_result(tv, tag, result, now);
+      cec_sad_tx_result(&p->sad, tag, result, now);
     }
   }
   if (incoming.len) {
     ++cec_rx_frames;
-    cec_tv_receive(tv, &incoming, now);
+    if (!cec_sad_receive(&p->sad, &incoming, now))
+      cec_tv_receive(tv, &incoming, now);
     if (incoming.len == 3 && incoming.data[0] == 0x50 &&
         incoming.data[1] == 0x7a && tv->volume <= 100)
       p->reset_status_fresh = true;
   }
   cec_tv_task(tv, now);
+  cec_sad_task(&p->sad, present && tv->registered && !tv->conflict &&
+               tv->arc == CEC_ARC_ON && tv->desired, enqueue, p, now);
   volume_task(p, now, present);
   bool enabled = present && tv->registered && !tv->conflict &&
                  tv->arc == CEC_ARC_ON && tv->desired;
   if (enabled != p->gate) {
     p->gate = enabled;
-#if BOARD_ARC_COUNT > 1
-    spdif_set_port_link_enabled(i, enabled);
-#else
-    spdif_set_link_enabled(enabled);
-#endif
+    update_output_gate(i);
     board_status_set_arc(i, enabled);
   }
   irq = save_and_disable_interrupts();
   wire->address = tv->registered && !tv->conflict ? 0 : 15;
+  // Discard a queued diagnostic request if ARC was stopped before transmission.
+  while (p->count && !wire->tx_pending && !wire->tx_result &&
+         p->queue[p->tail].tag > CEC_SAD_TAG_BASE &&
+         (p->sad.stage != 1 || p->queue[p->tail].tag != CEC_SAD_TAG_BASE + p->sad.codec)) {
+    p->tail = (p->tail + 1) % 8; --p->count; p->attempts = 0;
+  }
   if (p->count && !wire->tx_pending && !wire->tx_result)
     cec_wire_send(wire, &p->queue[p->tail], now);
   restore_interrupts(irq);

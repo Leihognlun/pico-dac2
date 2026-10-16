@@ -127,7 +127,9 @@ int main(void) {
          ports[0].tv.volume == 127 && ports[0].count == 0 &&
          ports[0].wire.address == 15);
   levels[19] = false; sample_detect(now); board_status_task();
-  assert(!levels[28] && !links[0] && !links[1]);
-  assert(!cec_arc_audio_allowed() && !levels[17] && !levels[16]);
+  assert(!levels[28] && links[0] && !links[1]);
+  assert(cec_arc_audio_allowed() && !levels[17] && !levels[16]);
+  cec_arc_set_port_playing(0, false);
+  assert(!links[0] && !cec_arc_audio_allowed());
   puts("PASS: 100 ms independent detect, ready HPD, CEC gates and volume routing");
 }

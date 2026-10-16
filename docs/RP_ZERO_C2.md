@@ -45,9 +45,11 @@ C2 没有独立 LED- GPIO；C1 保留原有 LED- 低电平输出及四键行为�
 两路共用一个 TF 或 USB 音源、格式、采样率和播放进度，**同时最多一路选择实际音频载荷**。
 上电不自动播放。SPDIF 初始化并启动后，已建立 ARC 链路的两路均持续发送载波。
 按 B1 选择 ARC1 并点亮 B1 灯；按 B2 切换至 ARC2 并点亮 B2 灯、熄灭 B1 灯，反向同理。
-再次按下当前已选中端口的键则停止，两路改发零载荷、V=1 的无效音频保活帧。
-按任一播放键可重新选择输出。切换在 DMA 块边界更新载荷路由，旧端口继续发送保活帧；
-实际载波仍需对应端口自身的 ARC 链路许可，断开链路的端口保持低电平。
+再次按下当前已选中端口的键则停止，已建立 ARC 的端口改发零载荷、V=1 的无效音频保活帧。
+按任一播放键可重新选择输出，即使对应端口未插线或尚未完成 ARC 握手，也开始输出
+音频数据流。切换在 DMA 块边界更新载荷路由；旧端口已连接时继续发送保活帧，
+未连接时保持低电平。手动启动的端口在拔线或重新协商期间仍继续输出，停止或切走
+时撤销手动放行。
 B3/B4/B5 灯仅在选择播放时点亮；停止时这三个键不产生操作。
 CEC/HPD/DDC 链路维护独立于音频播放，黄色灯结合 ARC 连接状态和本地播放选择显示。
 HDMI Detect 从连接变为断开时，该端口会清空 CEC 消息队列并重置地址注册、
@@ -60,7 +62,8 @@ CEC 会分别监控两台 Soundbar 上报的音量。整台设备所有端口均
 音量查询只在对应端口处于 `ARC_ON` 时进行，ARC 未连接或正在协商时不发送 `05:71`。
 
 TF 模式：上电可读卡预缓冲，但不消耗音频播放位置。B3 切换共享播放列表的下一首。
-停止或所选端口未建立链路时，保留当前播放位置；切换端口时沿用当前文件与播放进度。
+停止时保留当前播放位置；手动播放不等待 ARC，未建立链路时也正常推进文件。
+切换端口时沿用当前文件与播放进度。
 压缩音频恢复时等待完整 IEC 61937 burst 起点；不解码或重新编码 AC-3/E-AC-3。
 连续播放两首后自动进入待机；10 秒内重新播放时从下一首开始，超过 10 秒则从列表第一首开始。
 
@@ -92,6 +95,46 @@ cmake --build build/dev-zero-c2-usb
 
 输出分别为构建目录中的 `mdac_adc2.uf2`。C1 使用单独目录并指定
 `-DPICODAC_BOARD=c1`，接线见 [RP_ZERO_C1.md](RP_ZERO_C1.md)。
+
+### SPDIF 开漏版本
+
+`PICODAC_SPDIF_OPEN_DRAIN=ON` 将 SPDIF 改为开漏输出：PIO 只主动拉低，
+高电平时将引脚切为高阻，输出锁存器始终为 0，并关闭内部上下拉。
+C2 两路 GP23/GP18 同时使用此模式，断开链路或停止 SPDIF 时仍保持低电平。
+默认 `OFF` 沿用推挽输出，C1 也支持此选项。
+
+SPDIF GPIO 使用快速边沿，驱动能力由 `PICODAC_SPDIF_DRIVE_MA=2/4/8/12`
+配置，默认 2 mA，适用于 C1 的 GP16 及 C2 的 GP23/GP18。
+开漏模式中该设置作用于主动拉低，
+上升沿仍由外部上拉决定。2026-10-11 的 8 mA 开漏 TF 固件分别存放在
+`build/dev-zero-c1-tf-open-drain-8ma` 和 `build/dev-zero-c2-tf-open-drain-8ma`。
+重建这些 8 mA 版本时需显式指定 `-DPICODAC_SPDIF_DRIVE_MA=8`。
+
+### SPDIF 2 mA 推挽版本
+
+推挽版本主动驱动高、低电平，使用 `PICODAC_SPDIF_OPEN_DRAIN=OFF`。
+C1 和 C2 的 TF 固件使用独立目录：
+
+```powershell
+cmake -S . -B build/c1-tf -G Ninja -DCMAKE_BUILD_TYPE=Release -DPICODAC_BOARD=c1 -DPICODAC_INPUT=SD_AUDIO -DPICODAC_SD_UART_LOG=ON -DPICODAC_SPDIF_OPEN_DRAIN=OFF -DPICODAC_SPDIF_DRIVE_MA=2
+cmake --build build/c1-tf
+cmake -S . -B build/c2-tf -G Ninja -DCMAKE_BUILD_TYPE=Release -DPICODAC_BOARD=c2 -DPICODAC_INPUT=SD_AUDIO -DPICODAC_SD_UART_LOG=ON -DPICODAC_SPDIF_OPEN_DRAIN=OFF -DPICODAC_SPDIF_DRIVE_MA=2
+cmake --build build/c2-tf
+```
+
+每个目录中的 `mdac_adc2.uf2` 为对应板子的烧录文件。
+
+### 通用开漏构建
+
+```powershell
+cmake -S . -B build/dev-zero-c2-tf-open-drain -G Ninja -DCMAKE_BUILD_TYPE=Release -DPICODAC_BOARD=c2 -DPICODAC_INPUT=SD_AUDIO -DPICODAC_SD_UART_LOG=ON -DPICODAC_SPDIF_OPEN_DRAIN=ON
+cmake --build build/dev-zero-c2-tf-open-drain
+```
+
+烧录文件为 `build/dev-zero-c2-tf-open-drain/mdac_adc2.uf2`。
+两路输出均需要外部上拉至 GPIO 允许的电压；上升沿取决于上拉电阻和线路电容，
+需在实际电路中验证，尤其是 192 kHz 载波。此构建保留快速下降沿设置，
+但不能加速外部上拉产生的上升沿。
 
 `python tests/run_tests.py` 包含 C1 回归以及 C2 按键、HID、双 DDC、独立 CEC/HPD、
 双 DMA 缓冲所有权、单路静音/断开、压缩音频恢复与格式重启测试。

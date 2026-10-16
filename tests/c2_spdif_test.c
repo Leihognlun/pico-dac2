@@ -6,6 +6,18 @@ unsigned fake_sm_count, fake_dma_count, fake_enabled_mask;
 bool fake_pending[2];
 const void *fake_dma_read[2];
 unsigned fake_function[30];
+bool fake_pin_high[30], fake_pin_output[30], fake_pulls_disabled[30];
+bool fake_sideset_pindirs[4];
+unsigned fake_drive_strength[30];
+static void check_output_mode(void) {
+  for (unsigned p = 0; p < 2; ++p) {
+    assert(fake_sideset_pindirs[sm[p]] == !!PICODAC_SPDIF_OPEN_DRAIN);
+    assert(!fake_pin_high[pins[p]]);
+    assert(fake_pin_output[pins[p]]);
+    assert(fake_pulls_disabled[pins[p]] == !!PICODAC_SPDIF_OPEN_DRAIN);
+    assert(fake_drive_strength[pins[p]] == PICODAC_SPDIF_DRIVE_STRENGTH);
+  }
+}
 static void complete(unsigned p) { fake_pending[p] = true; spdif_dma_handler(); }
 static void pair(unsigned first) { complete(first); complete(1 - first); }
 static int submit(bool start) {
@@ -17,6 +29,7 @@ static int submit(bool start) {
 }
 int main(void) {
   spdif_init(23, 192000, 16, true); spdif_start();
+  check_output_mode();
   assert(fake_enabled_mask == 3);
   assert(fake_function[23] == 6 && fake_function[18] == 6);
   submit(true); pair(0);
@@ -43,6 +56,7 @@ int main(void) {
   a = submit(true); pair(1);
   assert(fake_dma_read[0] == encoded[a] && fake_dma_read[1] == silence);
   spdif_set_port_link_enabled(0, false);
+  check_output_mode();
   assert(fake_function[23] == GPIO_FUNC_SIO && fake_function[18] == 6);
   spdif_set_port_link_enabled(0, true);
   a = submit(false); pair(0); assert(fake_dma_read[0] == silence);
@@ -55,6 +69,7 @@ int main(void) {
     assert(fake_enabled_mask == 3);
   }
   spdif_deinit();
+  check_output_mode();
   assert(!fake_enabled_mask && !fake_sm_count && !fake_dma_count);
   spdif_init(23, 48000, 24, false); spdif_start();
   a = submit(false); pair(0);
@@ -62,6 +77,7 @@ int main(void) {
   spdif_set_port_playing(1, true);
   a = submit(false); pair(1); assert(fake_dma_read[1] == encoded[a]);
   spdif_stop(); spdif_start();
+  check_output_mode();
   assert(fake_function[23] == 6 && fake_function[18] == 6);
   spdif_deinit();
   puts("PASS: dual ARC idle carriers, exclusive payload, link gating, burst rejoin and DMA ownership");
